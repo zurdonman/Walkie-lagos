@@ -9,7 +9,8 @@
     "start": "node server.js",
     "https": "node server.js --https",
     "cert": "bash scripts/gen-cert.sh",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node test/protocol.test.mjs && node test/audio.test.mjs && node test/ui.test.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -18,5 +19,8 @@
     "express": "^5.1.0",
     "ws": "^8.18.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "jsdom": "^31.0.0"
+  }
 }

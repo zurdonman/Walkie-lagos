@@ -3,7 +3,8 @@
   "tagline": "Radio interna del restaurante",
   "pin": "lagos",
   "maxTalkSeconds": 45,
-  "maxTalkersPerRoom": 1,
+  "maxAlertSeconds": 25,
+  "alertsEnabled": true,
   "rooms": [
     { "id": "general", "name": "General", "emoji": "📢", "color": "#f59e0b" },
     { "id": "cocina", "name": "Cocina", "emoji": "🍳", "color": "#ef4444" },

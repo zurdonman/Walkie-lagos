@@ -40,6 +40,11 @@
     peerTalking: null,
     locked: false,
     online: 0,
+    /** Destino del PTT: {kind:"room"} | {kind:"dm", id, name} | {kind:"alert"} */
+    target: { kind: 'room' },
+    dmPeerTalking: null,
+    maxAlertSeconds: 25,
+    alertsEnabled: true,
     settings: Object.assign(
       { ns: true, ec: true, beeps: true, vibe: false, vol: 130, rate: 16000, mic: '' },
       LS.get('settings', {})
@@ -163,7 +168,7 @@
       this.analyserIn.fftSize = 512;
       source.connect(this.analyserIn);
 
-      if (!this.workletReady) {
+      if (!this.workletReady && !this.workletBroken) {
         const code = `
           class WalkieCapture extends AudioWorkletProcessor {
             constructor(options) {
@@ -208,32 +213,83 @@
           }
           registerProcessor('walkie-capture', WalkieCapture);
         `;
-        const blob = new Blob([code], { type: 'application/javascript' });
-        const url = URL.createObjectURL(blob);
-        await ctx.audioWorklet.addModule(url);
-        URL.revokeObjectURL(url);
-        this.workletReady = true;
+        try {
+          const blob = new Blob([code], { type: 'application/javascript' });
+          const url = URL.createObjectURL(blob);
+          await ctx.audioWorklet.addModule(url);
+          URL.revokeObjectURL(url);
+          this.workletReady = true;
+        } catch {
+          // Safari antiguo, navegadores sin audioWorklet o contextos raros:
+          // seguimos por el camino clásico (ScriptProcessor).
+          this.workletBroken = true;
+        }
       }
 
-      this.workletNode = new AudioWorkletNode(ctx, 'walkie-capture', {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        channelCount: 1,
-        processorOptions: { targetRate: this.rate },
-      });
-      this.workletNode.port.onmessage = (event) => {
-        if (!state.talking) return;
-        const ws = state.socket;
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(event.data);
-        measureOut(event.data);
-      };
-
-      // El worklet necesita un destino para que el navegador lo procese; lo
+      // El nodo necesita un destino para que el navegador lo procese; lo
       // mandamos a una ganancia a 0 para no escucharnos a nosotros mismos.
       this.silentGain = ctx.createGain();
       this.silentGain.gain.value = 0;
-      source.connect(this.workletNode);
-      this.workletNode.connect(this.silentGain).connect(ctx.destination);
+
+      if (this.workletReady) {
+        this.workletNode = new AudioWorkletNode(ctx, 'walkie-capture', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          channelCount: 1,
+          processorOptions: { targetRate: this.rate },
+        });
+        this.workletNode.port.onmessage = (event) => {
+          if (!state.talking) return;
+          const ws = state.socket;
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(event.data);
+          measureOut(event.data);
+        };
+        source.connect(this.workletNode);
+        this.workletNode.connect(this.silentGain).connect(ctx.destination);
+      } else {
+        // Plan B: ScriptProcessor con remuestreo y troceado en 20 ms.
+        const bufferSize = 2048;
+        const proc = ctx.createScriptProcessor(bufferSize, 1, 1);
+        const step = ctx.sampleRate / this.rate;
+        let pos = 0;
+        let prev = 0;
+        let hasPrev = false;
+        const packetSize = Math.round(this.rate * 0.02);
+        let out = new Int16Array(packetSize);
+        let outLen = 0;
+        proc.onaudioprocess = (event) => {
+          if (!state.talking) return;
+          const ch = event.inputBuffer.getChannelData(0);
+          if (!hasPrev) {
+            prev = ch[0];
+            hasPrev = true;
+          }
+          while (true) {
+            const idx = Math.floor(pos);
+            if (idx + 1 >= ch.length) {
+              pos -= ch.length;
+              prev = ch[ch.length - 1];
+              break;
+            }
+            const frac = pos - idx;
+            const a = idx === 0 ? prev : ch[idx];
+            const sample = a + (ch[idx + 1] - a) * frac;
+            const v = Math.max(-1, Math.min(1, sample));
+            out[outLen++] = v < 0 ? v * 0x8000 : v * 0x7fff;
+            if (outLen >= packetSize) {
+              const copy = out.slice(0);
+              const ws = state.socket;
+              if (ws && ws.readyState === WebSocket.OPEN) ws.send(copy.buffer);
+              measureOut(copy.buffer);
+              outLen = 0;
+            }
+            pos += step;
+          }
+        };
+        source.connect(proc);
+        proc.connect(this.silentGain).connect(ctx.destination);
+        this.scriptNode = proc;
+      }
       this.capturing = true;
     },
 
@@ -242,6 +298,13 @@
         this.workletNode?.port?.close?.();
         this.workletNode?.disconnect();
       } catch {}
+      try {
+        if (this.scriptNode) {
+          this.scriptNode.onaudioprocess = null;
+          this.scriptNode.disconnect();
+        }
+      } catch {}
+      this.scriptNode = null;
       try {
         this.silentGain?.disconnect();
       } catch {}
@@ -472,6 +535,9 @@
         state.room = msg.you.room;
         state.rooms = msg.rooms || [];
         state.maxTalkSeconds = msg.maxTalkSeconds || 45;
+        state.maxAlertSeconds = msg.maxAlertSeconds || 25;
+        state.alertsEnabled = msg.alertsEnabled !== false;
+        $('alertBtn').hidden = !state.alertsEnabled;
         LS.set('room', state.room);
         showApp();
         renderRooms();
@@ -482,6 +548,7 @@
       }
       case 'switched': {
         state.room = msg.room;
+        if (state.target?.kind === 'dm') setTarget({ kind: 'room' });
         LS.set('room', state.room);
         audio.resetPlayback();
         hideIncoming();
@@ -518,7 +585,9 @@
         state.talking = true;
         state.talkStartedAt = Date.now();
         state.maxTalkSeconds = msg.maxSeconds || state.maxTalkSeconds;
-        beep(920, 0.08);
+        state.talkingScope = msg.scope || 'room';
+        state.talkingTo = msg.to ? { id: msg.to, name: msg.toName } : null;
+        beep(msg.scope === 'alert' ? 1050 : 920, 0.08);
         renderTalkingUI();
         startPttTimer();
         requestWakeLock();
@@ -529,25 +598,65 @@
         beep(300, 0.14, 0.05);
         renderTalkingUI();
         flashBusy();
-        toast(`${msg.by || 'Alguien'} está hablando`);
+        const who = msg.by || 'Alguien';
+        toast(
+          msg.scope === 'dm'
+            ? `${who} está ocupado en otra conversación`
+            : msg.scope === 'alert'
+              ? 'Hay un aviso prioritario en curso'
+              : `${who} está hablando`
+        );
         setTimeout(() => {
           if (!state.talking) audio.releaseMic();
         }, 300);
         break;
       case 'talkStart': {
-        state.peerTalking = msg.from;
         state.peerRate = msg.rate || 16000;
-        showIncoming(msg.from);
-        if (state.settings.vibe && navigator.vibrate) navigator.vibrate(40);
-        beep(760, 0.06, 0.035);
+        if (msg.alert) {
+          state.peerTalking = msg.from;
+          state.alertTalking = true;
+          showIncoming(msg.from, 'aviso prioritario', true);
+          if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
+          beep(1050, 0.12, 0.09);
+          setTimeout(() => beep(1200, 0.12, 0.09), 160);
+        } else if (msg.dm) {
+          state.dmPeerTalking = msg.from;
+          state.peerTalking = msg.from;
+          showIncoming(msg.from, 'te habla a ti (privado)', false);
+          if (state.settings.vibe && navigator.vibrate) navigator.vibrate(40);
+          beep(820, 0.06, 0.04);
+        } else {
+          state.peerTalking = msg.from;
+          showIncoming(msg.from);
+          if (state.settings.vibe && navigator.vibrate) navigator.vibrate(40);
+          beep(760, 0.06, 0.035);
+        }
         break;
       }
       case 'talkEnd':
+        if (msg.scope === 'alert' && state.target?.kind === 'alert') setTarget({ kind: 'room' });
+        if (!msg.scope || msg.scope === 'alert') state.alertTalking = false;
+        if (!msg.scope || msg.scope === 'dm') state.dmPeerTalking = null;
         state.peerTalking = null;
         hideIncoming();
         break;
+      case 'dmOffer':
+        if (state.settings.vibe && navigator.vibrate) navigator.vibrate(25);
+        toast(`${msg.from} quiere hablar contigo`, 2200);
+        break;
+      case 'alert':
+        showAlert(msg.from, msg.text);
+        addLog({ what: `🚨 Aviso de ${msg.from}: ${msg.text}`, ts: msg.ts, kind: 'alert' });
+        if (navigator.vibrate) navigator.vibrate([80, 60, 80]);
+        beep(1050, 0.12, 0.08);
+        break;
       case 'chat':
-        addLog({ who: msg.from, what: msg.text, ts: msg.ts, kind: 'chat' });
+        addLog({
+          who: msg.dm ? `${msg.from} · privado` : msg.from,
+          what: msg.text,
+          ts: msg.ts,
+          kind: msg.dm ? 'dm' : 'chat',
+        });
         if (msg.from !== state.name) {
           if (state.settings.vibe && navigator.vibrate && document.hidden) navigator.vibrate(30);
           if (document.hidden) beep(680, 0.07, 0.03);
@@ -585,13 +694,26 @@
     }, 100);
   }
 
+  function talkScope() {
+    const target = state.target || { kind: 'room' };
+    if (target.kind === 'alert') return { kind: 'alert' };
+    if (target.kind === 'dm' && target.id) return { kind: 'dm', to: target.id };
+    return { kind: 'room' };
+  }
+
   async function startTalking() {
     if (!state.joined || state.talking) return;
-    if (state.peerTalking) {
+    const scope = talkScope();
+    if (scope.kind === 'room' && state.peerTalking) {
       // El canal está ocupado: avisamos sin encender el micro.
       beep(300, 0.12, 0.05);
       flashBusy();
       toast(`${state.peerTalking} está hablando`);
+      return;
+    }
+    if (scope.kind === 'dm' && state.dmPeerTalking === state.target.name) {
+      // Te está hablando a ti: responde cuando termine.
+      toast(`${state.target.name} te está hablando`);
       return;
     }
     state.wantTalking = true;
@@ -610,7 +732,7 @@
       audio.releaseMic();
       return;
     }
-    send({ type: 'talk', on: true, rate: Number(state.settings.rate) || 16000 });
+    send({ type: 'talk', on: true, scope, rate: Number(state.settings.rate) || 16000 });
   }
 
   function stopTalking() {
@@ -620,6 +742,13 @@
       beep(620, 0.08, 0.045);
     }
     state.talking = false;
+    state.talkingScope = null;
+    state.talkingTo = null;
+    if (state.target?.kind === 'alert') {
+      // El modo aviso es de un solo uso: vuelve a hablar al canal.
+      setTarget({ kind: 'room' });
+      toast('Aviso enviado · vuelves al canal', 2200);
+    }
     clearInterval(pttInterval);
     $('pttTimer').textContent = '';
     renderTalkingUI();
@@ -635,9 +764,27 @@
     ptt.classList.toggle('is-talking', state.talking);
     ptt.disabled = !state.joined;
     const text = ptt.querySelector('.ptt-text');
-    if (state.talking) text.innerHTML = 'HABLANDO<br /><small>suelta para terminar</small>';
-    else if (state.peerTalking) text.innerHTML = 'ESCUCHANDO<br /><small>canal ocupado</small>';
-    else text.innerHTML = 'MANTÉN<br />PARA HABLAR';
+    const target = state.target || { kind: 'room' };
+    const toLabel =
+      target.kind === 'dm' && target.name
+        ? `a ${escapeHtml(target.name)}`
+        : target.kind === 'alert'
+          ? 'aviso a todos'
+          : 'para hablar';
+    if (state.talking) {
+      const detail =
+        state.talkingScope === 'alert'
+          ? 'aviso en todo el restaurante'
+          : state.talkingTo?.name
+            ? `solo a ${escapeHtml(state.talkingTo.name)}`
+            : 'suelta para terminar';
+      text.innerHTML = (state.talkingScope === 'alert' ? 'AVISO 🚨<br />' : 'HABLANDO<br />') + `<small>${detail}</small>`;
+    } else if (state.peerTalking && target.kind === 'room' && !state.dmPeerTalking) {
+      text.innerHTML = 'ESCUCHANDO<br /><small>canal ocupado</small>';
+    } else {
+      text.innerHTML = `MANTÉN<br /><small style="letter-spacing:.04em">${toLabel}</small>`;
+    }
+    ptt.classList.toggle('is-alert', state.talkingScope === 'alert' && state.talking);
     if (!state.talking) $('pttTimer').textContent = '';
   }
 
@@ -647,15 +794,31 @@
     setTimeout(() => ptt.classList.remove('is-busy'), 320);
   }
 
-  function showIncoming(name) {
+  function showIncoming(name, label, isAlert) {
     $('incomingName').textContent = name;
+    $('incomingLabel').textContent = label || 'está hablando';
+    $('incoming').classList.toggle('is-alert', Boolean(isAlert));
     $('incoming').hidden = false;
     $('vuBar').style.width = '4%';
     renderTalkingUI();
   }
 
+  let alertTimer = null;
+  function showAlert(from, text) {
+    $('alertTitle').textContent = `Aviso de ${from}`;
+    $('alertSub').textContent = 'prioridad: se oye en todos los canales';
+    $('alertText').textContent = text;
+    $('alertBanner').hidden = false;
+    clearTimeout(alertTimer);
+    alertTimer = setTimeout(() => {
+      $('alertBanner').hidden = true;
+    }, 15000);
+  }
+
   function hideIncoming() {
     $('incoming').hidden = true;
+    $('incoming').classList.remove('is-alert');
+    $('incomingLabel').textContent = 'está hablando';
     $('vuBar').style.width = '4%';
     renderTalkingUI();
   }
@@ -697,6 +860,7 @@
     $('login').hidden = true;
     $('app').hidden = false;
     $('nameInput').value = state.name;
+    setTarget({ kind: 'room' });
     updateRoomHeader();
     renderTalkingUI();
     requestAnimationFrame(rafMeters);
@@ -754,6 +918,25 @@
     });
   }
 
+  function setTarget(target) {
+    state.target = target;
+    const isDm = target.kind === 'dm';
+    const isAlert = target.kind === 'alert';
+    $('targetAll').setAttribute('aria-pressed', String(!isDm && !isAlert));
+    $('targetDm').setAttribute('aria-pressed', String(isDm));
+    $('alertBtn').setAttribute('aria-pressed', String(isAlert));
+    const nameEl = $('targetName');
+    if (isDm && target.name) {
+      nameEl.textContent = target.name;
+      nameEl.hidden = false;
+    } else {
+      nameEl.hidden = true;
+    }
+    const room = state.rooms.find((r) => r.id === state.room);
+    $('targetRoomEmoji').textContent = room?.emoji || '📢';
+    renderTalkingUI();
+  }
+
   function selectLoginRoom(id) {
     state.room = id;
     [...$('loginRooms').children].forEach((el) => {
@@ -764,13 +947,30 @@
   function resizeRoster(users) {
     const roster = $('roster');
     roster.innerHTML = '';
+    state.peers = users.filter((u) => !state.you || u.id !== state.you.id);
     users.forEach((user) => {
       const isMe = state.you && user.id === state.you.id;
-      const el = document.createElement('div');
-      el.className = `person${isMe ? ' me' : ''}${user.talking || state.peerTalking === user.name ? ' speaking' : ''}`;
+      const isTarget = state.target?.kind === 'dm' && state.target.id === user.id;
+      const el = document.createElement(isMe ? 'div' : 'button');
+      if (!isMe) {
+        el.type = 'button';
+        el.title = `Hablar solo con ${user.name}`;
+      }
+      el.className = `person${isMe ? ' me' : ' selectable'}${isTarget ? ' target' : ''}${user.talking || state.peerTalking === user.name ? ' speaking' : ''}`;
       el.innerHTML = `<span class="avatar" style="background:${colorFor(user.name)}">${escapeHtml(initials(user.name))}</span><span class="name">${escapeHtml(user.name)}${isMe ? ' (tú)' : ''}</span>`;
       if (user.talking) {
         el.innerHTML += `<span class="live-dot"></span>`;
+      }
+      if (!isMe) {
+        el.addEventListener('click', () => {
+          if (state.talking) {
+            toast('Suelta el botón antes de cambiar de destino');
+            return;
+          }
+          const alreadyMine = state.target?.kind === 'dm' && state.target.id === user.id;
+          setTarget(alreadyMine ? { kind: 'room' } : { kind: 'dm', id: user.id, name: user.name });
+          toast(alreadyMine ? 'Vuelves a hablar a todo el canal' : `Hablarás solo con ${user.name}`);
+        });
       }
       roster.appendChild(el);
     });
@@ -953,6 +1153,41 @@
       $('lockLabel').textContent = state.locked ? 'Modo pulsar (bloqueado)' : 'Mantener pulsado';
       renderTalkingUI();
       toast(state.locked ? 'Micro bloqueado: pulsa para hablar/soltar' : 'Vuelve a mantener pulsado');
+    });
+
+    // --- destino del PTT
+    $('targetAll').addEventListener('click', () => {
+      if (state.talking) return toast('Suelta el botón antes de cambiar de destino');
+      setTarget({ kind: 'room' });
+      toast('Hablarás a todo el canal');
+    });
+
+    $('alertBtn').addEventListener('click', () => {
+      if (!state.alertsEnabled) return toast('Los avisos prioritarios están desactivados');
+      if (state.talking) return toast('Suelta el botón antes de cambiar de destino');
+      const isAlert = state.target?.kind === 'alert';
+      setTarget(isAlert ? { kind: 'room' } : { kind: 'alert' });
+      if (!isAlert) toast('Modo aviso: mantén el botón para avisar a TODO el restaurante', 3400);
+    });
+
+    $('alertForm')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const input = $('alertInput');
+      const text = input.value.trim();
+      if (!text) return;
+      send({ type: 'alert', text });
+      input.value = '';
+    });
+
+    $('alertDismiss').addEventListener('click', () => {
+      $('alertBanner').hidden = true;
+      clearTimeout(alertTimer);
+    });
+
+    $('dmWith')?.addEventListener('change', (event) => {
+      const id = event.target.value;
+      const peer = (state.peers || []).find((p) => p.id === id);
+      setTarget(peer ? { kind: 'dm', id: peer.id, name: peer.name } : { kind: 'room' });
     });
 
     // --- canales

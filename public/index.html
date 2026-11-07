@@ -82,13 +82,44 @@
       </header>
 
       <section class="stage">
+        <div id="alertBanner" class="alert-banner" hidden>
+          <div class="alert-head">
+            <span class="alert-icon">🚨</span>
+            <div>
+              <strong id="alertTitle">Aviso prioritario</strong>
+              <small id="alertSub">escucha y atiende</small>
+            </div>
+            <button id="alertDismiss" class="alert-close" aria-label="Descartar">✕</button>
+          </div>
+          <p id="alertText" class="alert-text"></p>
+          <form id="alertForm" class="alert-form">
+            <input id="alertInput" type="text" maxlength="200" placeholder="Escribe el aviso (ej. mesa 7 sin pan)…" autocomplete="off" enterkeyhint="send" />
+            <button type="submit" class="alert-send">Enviar</button>
+          </form>
+        </div>
+
         <div id="incoming" class="incoming" hidden>
           <div class="incoming-head">
             <span class="live-dot"></span>
             <strong id="incomingName">Alguien</strong>
-            <span class="incoming-label">está hablando</span>
+            <span id="incomingLabel" class="incoming-label">está hablando</span>
           </div>
           <div class="vu"><div id="vuBar" class="vu-bar"></div></div>
+        </div>
+
+        <div id="targetBar" class="target-bar">
+          <button id="targetAll" class="target-chip" aria-pressed="true" title="Hablar a todo el canal">
+            <span id="targetRoomEmoji">📢</span>
+            <span>Todo el canal</span>
+          </button>
+          <button id="targetDm" class="target-chip" aria-pressed="false" title="Hablar solo con una persona">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 6h16v9H9l-4 4V6z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></svg>
+            <span>Solo a…</span>
+            <span id="targetName" hidden></span>
+          </button>
+          <button id="alertBtn" class="target-chip danger" title="Aviso prioritario a todo el restaurante">
+            🚨 <span>Aviso a todos</span>
+          </button>
         </div>
 
         <div id="pttWrap" class="ptt-wrap">
@@ -106,6 +137,7 @@
         </div>
 
         <div id="roster" class="roster" aria-live="polite"></div>
+        <p id="rosterHint" class="roster-hint">Toca un nombre para hablarle solo a esa persona</p>
       </section>
 
       <section class="log-wrap">

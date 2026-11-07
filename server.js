@@ -4,26 +4,38 @@
  * Un solo proceso Node: sirve la web (public/) y gestiona el audio en tiempo
  * real por WebSocket (binario = fragmentos de audio, JSON = control).
  *
+ * Concepto de "turno" (talk slot): todo el audio se organiza alrededor de una
+ * clave de conversación. Hay tres tipos:
+ *
+ *   canal:<roomId>       todo el que está en ese canal
+ *   dm:<idA>|:<idB>      conversación privada entre dos personas (ids ordenados)
+ *   alert                aviso prioritario, lo oye TODO el restaurante
+ *
  * Protocolo (cliente -> servidor)
- *   {type:"join", name, pin, room}    entra a un canal
- *   {type:"switch", room}             cambia de canal (cuelga el PTT abierto)
- *   {type:"talk", on:true|false}      pide empezar / terminar de hablar
- *   {type:"chat", text}               mensaje de texto al canal
- *   {type:"ping"}                     keep-alive
- *   <binario>                         chunk de audio (solo si eres el que habla)
+ *   {type:"join", name, pin, room}          entra al restaurante (y a un canal)
+ *   {type:"switch", room}                   cambia de canal
+ *   {type:"talk", on, scope, rate}          pide/entrega el turno
+ *        scope: {kind:"room"} (por defecto) | {kind:"dm", to:<clientId>}
+ *               | {kind:"alert"}
+ *   {type:"chat", text, to?}                mensaje al canal o privado (to=clientId)
+ *   {type:"alert", text}                    aviso prioritario a todos
+ *   {type:"ping"}                           keep-alive
+ *   <binario>                               chunk de audio (solo si tienes turno)
  *
  * Protocolo (servidor -> cliente)
  *   {type:"welcome", you, rooms, users, ...}
- *   {type:"roster", users}            quién está en mi canal
- *   {type:"presence", ...}            quién hay conectado en total
- *   {type:"talkAccept", from}         te han dado el turno de palabra
- *   {type:"talkDeny", reason, by}     alguien más está hablando
- *   {type:"talkStart", from}          empieza a llegar audio de alguien
- *   {type:"talkEnd", from}
- *   {type:"chat", from, text, ts}
+ *   {type:"roster", users}                  quién está en mi canal
+ *   {type:"presence", online}
+ *   {type:"talkAccept", scope, maxSeconds}
+ *   {type:"talkDeny", reason, by, scope}
+ *   {type:"talkStart", from, fromId, rate, alert?, dm?}
+ *   {type:"talkEnd", from, reason}
+ *   {type:"chat", from, text, ts, dm?}
+ *   {type:"alert", from, text, ts}          aviso prioritario
+ *   {type:"dmOffer", from, fromId}          alguien quiere hablar contigo a solas
  *   {type:"rooms", rooms}
  *   {type:"error", message}
- *   <binario>                         audio del que habla
+ *   <binario>                               audio
  */
 'use strict';
 
@@ -42,7 +54,9 @@ const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), '
 const ROOMS = new Map(config.rooms.map((r) => [r.id, r]));
 const DEFAULT_ROOM = config.rooms[0]?.id || 'general';
 const MAX_TALK_MS = Number(config.maxTalkSeconds || 45) * 1000;
+const MAX_ALERT_MS = Number(config.maxAlertSeconds || 25) * 1000;
 const PIN = String(config.pin ?? '').trim();
+const ALERTS_ENABLED = config.alertsEnabled !== false;
 
 // ---------------------------------------------------------------------------
 // Estado en memoria
@@ -52,23 +66,71 @@ const PIN = String(config.pin ?? '').trim();
 const clients = new Map();
 /** roomId -> Set<clientId> de quién está en ese canal */
 const roomMembers = new Map();
-/** roomId -> {clientId, name, since, timer} del que tiene el turno */
+/** slotKey -> {key, kind, clientId, name, since, timer, rate, fromName?} */
 const talking = new Map();
 /** roomId -> [{from, text, ts}] últimos mensajes */
 const history = new Map();
+/** "idA|idB" ordenado -> [{from, text, ts}] últimos mensajes privados */
+const dmHistory = new Map();
 
 const HISTORY_SIZE = 60;
+const DM_HISTORY_SIZE = 30;
 
 function roomSet(roomId) {
   if (!roomMembers.has(roomId)) roomMembers.set(roomId, new Set());
   return roomMembers.get(roomId);
 }
 
+function roomKey(roomId) {
+  return `room:${roomId}`;
+}
+
+function dmKey(a, b) {
+  return `dm:${[a, b].sort().join('|')}`;
+}
+
+function dmParticipants(key) {
+  return key.slice(3).split('|');
+}
+
+function parseScope(raw, client) {
+  const kind = raw && typeof raw === 'object' ? raw.kind : undefined;
+  if (kind === 'alert') {
+    if (!ALERTS_ENABLED) return { error: 'Los avisos prioritarios están desactivados.' };
+    return { key: 'alert', kind: 'alert' };
+  }
+  if (kind === 'dm') {
+    const to = String(raw.to || '');
+    const peer = clients.get(to);
+    if (!peer || !peer.joined) return { error: 'Esa persona ya no está conectada.' };
+    if (peer.id === client.id) return { error: 'No puedes hablar contigo mismo.' };
+    return { key: dmKey(client.id, peer.id), kind: 'dm', peer };
+  }
+  return { key: roomKey(client.room), kind: 'room' };
+}
+
+/** A quién le llega el audio de este turno. */
+function targetsFor(slot) {
+  if (slot.kind === 'alert') return [...clients.values()].filter((c) => c.joined);
+  if (slot.kind === 'dm') {
+    return dmParticipants(slot.key)
+      .map((id) => clients.get(id))
+      .filter((c) => c && c.joined);
+  }
+  return [...roomSet(slot.key.slice(5))]
+    .map((id) => clients.get(id))
+    .filter((c) => c && c.joined);
+}
+
+function sendTo(client, payload) {
+  if (client?.ws.readyState === client.ws.OPEN) client.ws.send(JSON.stringify(payload));
+}
+
 function publicRooms() {
   return config.rooms.map((r) => ({
     ...r,
     count: roomSet(r.id).size,
-    talking: talking.get(r.id)?.name || null,
+    talking: talking.get(roomKey(r.id))?.name || null,
   }));
 }
 
@@ -77,7 +139,11 @@ function rosterOf(roomId) {
   return [...ids]
     .map((id) => clients.get(id))
     .filter(Boolean)
-    .map((c) => ({ id: c.id, name: c.name, talking: talking.get(roomId)?.clientId === c.id }))
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      talking: talking.get(roomKey(roomId))?.clientId === c.id,
+    }))
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 }
 
@@ -103,22 +169,38 @@ function pushRoster(roomId) {
   broadcast(roomId, { type: 'roster', room: roomId, users: rosterOf(roomId) });
 }
 
-function stopTalking(roomId, reason) {
-  const t = talking.get(roomId);
-  if (!t) return;
-  clearTimeout(t.timer);
-  talking.delete(roomId);
-  broadcast(roomId, { type: 'talkEnd', from: t.name, reason: reason || 'released' });
-  pushRooms();
-  pushRoster(roomId);
+function stopTalking(slot, reason) {
+  if (!slot) return;
+  clearTimeout(slot.timer);
+  if (talking.get(slot.key) !== slot) return;
+  talking.delete(slot.key);
+  const payload = { type: 'talkEnd', from: slot.name, reason: reason || 'released', scope: slot.kind };
+  for (const peer of targetsFor(slot)) {
+    if (peer.id !== slot.clientId) sendTo(peer, payload);
+  }
+  if (slot.kind === 'room') {
+    pushRooms();
+    pushRoster(slot.key.slice(5));
+  } else if (slot.kind === 'alert') {
+    pushRooms();
+  }
 }
 
 function leaveRoom(client) {
   const set = roomSet(client.room);
   set.delete(client.id);
-  if (talking.get(client.room)?.clientId === client.id) stopTalking(client.room, 'disconnected');
+  const slot = talking.get(roomKey(client.room));
+  if (slot?.clientId === client.id) stopTalking(slot, 'disconnected');
   pushRoster(client.room);
   pushRooms();
+}
+
+/** Cierra cualquier turno que tuviera este cliente (al salir o desconectarse). */
+function dropOwnSlots(client) {
+  for (const slot of [...talking.values()]) {
+    if (slot.clientId === client.id) stopTalking(slot, 'disconnected');
+    else if (slot.kind === 'dm' && slot.key.includes(client.id)) stopTalking(slot, 'disconnected');
+  }
 }
 
 function sanitizeName(raw) {
@@ -156,6 +238,8 @@ app.get('/api/config', (_req, res) => {
     tagline: config.tagline,
     requiresPin: Boolean(PIN),
     maxTalkSeconds: config.maxTalkSeconds,
+    maxAlertSeconds: config.maxAlertSeconds,
+    alertsEnabled: ALERTS_ENABLED,
     rooms: publicRooms(),
     online: clients.size,
   });
@@ -203,21 +287,29 @@ wss.on('connection', (ws, req) => {
     ws.isAlive = true;
   });
 
-  const fail = (message) => {
-    ws.send(JSON.stringify({ type: 'error', message }));
-  };
+  const fail = (message) => sendTo(client, { type: 'error', message });
+
+  /** Envía el audio de este turno a todos los destinatarios menos al emisor. */
+  function relayAudio(slot, raw) {
+    for (const peer of targetsFor(slot)) {
+      if (peer.id === slot.clientId) continue;
+      if (peer.ws.readyState === peer.ws.OPEN) peer.ws.send(raw, { binary: true });
+    }
+    client.bytes = (client.bytes || 0) + raw.length;
+  }
+
+  function currentSlotFor(key) {
+    return talking.get(key) || null;
+  }
 
   ws.on('message', (raw, isBinary) => {
     if (isBinary) {
-      // Audio: solo se retransmite si este cliente tiene el turno en su canal.
-      const t = talking.get(client.room);
-      if (!t || t.clientId !== client.id) return;
-      for (const id of roomSet(client.room)) {
-        if (id === client.id) continue;
-        const peer = clients.get(id);
-        if (peer?.ws.readyState === peer.ws.OPEN) peer.ws.send(raw, { binary: true });
-      }
-      client.bytes = (client.bytes || 0) + raw.length;
+      // Un cliente puede tener a la vez: su canal + un directo + un aviso.
+      // Averiguamos cuál de sus turnos está activo por el último que pidió.
+      const key = client.activeSlotKey;
+      const slot = key ? talking.get(key) : null;
+      if (!slot || slot.clientId !== client.id) return;
+      relayAudio(slot, raw);
       return;
     }
 
@@ -249,6 +341,8 @@ wss.on('connection', (ws, req) => {
             users: rosterOf(roomId),
             history: history.get(roomId) || [],
             maxTalkSeconds: config.maxTalkSeconds,
+            maxAlertSeconds: MAX_ALERT_MS / 1000,
+            alertsEnabled: ALERTS_ENABLED,
           })
         );
         broadcast(
@@ -267,6 +361,8 @@ wss.on('connection', (ws, req) => {
         const roomId = String(msg.room || '');
         if (!ROOMS.has(roomId)) return fail('Ese canal no existe.');
         if (roomId === client.room) break;
+        const previous = talking.get(roomKey(client.room));
+        if (previous?.clientId === client.id) stopTalking(previous, 'changed');
         leaveRoom(client);
         broadcast(client.room, { type: 'system', text: `${client.name} ha salido`, ts: Date.now() });
         client.room = roomId;
@@ -279,7 +375,11 @@ wss.on('connection', (ws, req) => {
             history: history.get(roomId) || [],
           })
         );
-        broadcast(roomId, { type: 'system', text: `${client.name} se ha conectado`, ts: Date.now() }, client.id);
+        broadcast(
+          roomId,
+          { type: 'system', text: `${client.name} se ha conectado`, ts: Date.now() },
+          client.id
+        );
         pushRoster(roomId);
         pushRooms();
         break;
@@ -287,36 +387,90 @@ wss.on('connection', (ws, req) => {
 
       case 'talk': {
         if (!client.joined) return fail('Entra primero.');
+
+        // --- entregar el turno
         if (!msg.on) {
-          if (talking.get(client.room)?.clientId === client.id) stopTalking(client.room, 'released');
+          if (client.activeSlotKey) {
+            const slot = talking.get(client.activeSlotKey);
+            if (slot?.clientId === client.id) stopTalking(slot, 'released');
+            client.activeSlotKey = null;
+          }
           break;
         }
-        const current = talking.get(client.room);
+
+        const scope = parseScope(msg.scope, client);
+        if (scope.error) return fail(scope.error);
+
+        // Si ya tenía otro turno abierto (canal/distinto directo), lo cerramos.
+        if (client.activeSlotKey && client.activeSlotKey !== scope.key) {
+          const previous = talking.get(client.activeSlotKey);
+          if (previous?.clientId === client.id) stopTalking(previous, 'switched');
+          client.activeSlotKey = null;
+        }
+
+        const current = currentSlotFor(scope.key);
         if (current && current.clientId !== client.id) {
-          ws.send(JSON.stringify({ type: 'talkDeny', reason: 'busy', by: current.name }));
+          sendTo(client, {
+            type: 'talkDeny',
+            reason: 'busy',
+            by: current.name,
+            scope: scope.kind,
+          });
           break;
         }
-        if (current) break; // ya tienes el turno
-        const rate = Number(msg.rate) > 0 ? Math.round(Number(msg.rate)) : 16000;
-        const entry = { clientId: client.id, name: client.name, since: Date.now(), rate };
-        entry.timer = setTimeout(() => {
-          if (talking.get(client.room) === entry) stopTalking(client.room, 'timeout');
-        }, MAX_TALK_MS);
-        talking.set(client.room, entry);
-        ws.send(JSON.stringify({ type: 'talkAccept', maxSeconds: config.maxTalkSeconds }));
-        broadcast(
-          client.room,
-          {
-            type: 'talkStart',
+
+        if (scope.kind === 'dm') {
+          // Avisamos al destinatario de quién le va a hablar (para que vea el aviso
+          // aunque el audio llegue después).
+          sendTo(scope.peer, {
+            type: 'dmOffer',
             from: client.name,
             fromId: client.id,
-            since: entry.since,
-            rate: entry.rate,
-          },
-          client.id
-        );
+          });
+        }
+
+        if (current) {
+          client.activeSlotKey = scope.key;
+          break; // ya tienes el turno
+        }
+
+        const rate = Number(msg.rate) > 0 ? Math.round(Number(msg.rate)) : 16000;
+        const limit = scope.kind === 'alert' ? MAX_ALERT_MS : MAX_TALK_MS;
+        const entry = {
+          key: scope.key,
+          kind: scope.kind,
+          clientId: client.id,
+          name: client.name,
+          since: Date.now(),
+          rate,
+        };
+        entry.timer = setTimeout(() => stopTalking(entry, 'timeout'), limit);
+        talking.set(scope.key, entry);
+        client.activeSlotKey = scope.key;
+
+        sendTo(client, {
+          type: 'talkAccept',
+          scope: scope.kind,
+          to: scope.peer?.id,
+          toName: scope.peer?.name,
+          maxSeconds: limit / 1000,
+        });
+
+        const start = {
+          type: 'talkStart',
+          from: client.name,
+          fromId: client.id,
+          since: entry.since,
+          rate: entry.rate,
+          alert: scope.kind === 'alert',
+          dm: scope.kind === 'dm',
+          scope: scope.kind,
+        };
+        for (const peer of targetsFor(entry)) {
+          if (peer.id !== client.id) sendTo(peer, start);
+        }
         pushRooms();
-        pushRoster(client.room);
+        if (scope.kind === 'room') pushRoster(client.room);
         break;
       }
 
@@ -325,6 +479,19 @@ wss.on('connection', (ws, req) => {
         const text = sanitizeText(msg.text);
         if (!text) break;
         const entry = { from: client.name, text, ts: Date.now() };
+
+        if (msg.to) {
+          const peer = clients.get(String(msg.to));
+          if (!peer || !peer.joined) return fail('Esa persona ya no está conectada.');
+          const key = dmKey(client.id, peer.id);
+          const list = dmHistory.get(key) || [];
+          list.push(entry);
+          dmHistory.set(key, list.slice(-DM_HISTORY_SIZE));
+          sendTo(peer, { type: 'chat', ...entry, dm: true, fromId: client.id });
+          sendTo(client, { type: 'chat', ...entry, dm: true, fromId: client.id, self: true });
+          break;
+        }
+
         const list = history.get(client.room) || [];
         list.push(entry);
         history.set(client.room, list.slice(-HISTORY_SIZE));
@@ -332,8 +499,23 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
+      case 'alert': {
+        if (!client.joined) return fail('Entra primero.');
+        if (!ALERTS_ENABLED) return fail('Los avisos prioritarios están desactivados.');
+        const text = sanitizeText(msg.text);
+        if (!text) break;
+        const entry = { from: client.name, text, ts: Date.now() };
+        for (const room of config.rooms) {
+          const list = history.get(room.id) || [];
+          list.push({ ...entry, alert: true });
+          history.set(room.id, list.slice(-HISTORY_SIZE));
+        }
+        broadcastAll({ type: 'alert', ...entry });
+        break;
+      }
+
       case 'ping':
-        ws.send(JSON.stringify({ type: 'pong', ts: Date.now() }));
+        sendTo(client, { type: 'pong', ts: Date.now() });
         break;
 
       default:
@@ -343,8 +525,13 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     if (client.joined) {
+      dropOwnSlots(client);
       leaveRoom(client);
-      broadcast(client.room, { type: 'system', text: `${client.name} se ha desconectado`, ts: Date.now() });
+      broadcast(client.room, {
+        type: 'system',
+        text: `${client.name} se ha desconectado`,
+        ts: Date.now(),
+      });
     }
     clients.delete(client.id);
     broadcastAll({ type: 'presence', online: clients.size });
@@ -374,7 +561,8 @@ server.listen(PORT, HOST, () => {
   console.log(`\n  ${config.appName} — ${config.tagline}`);
   console.log(`  Escuchando en ${scheme}://${HOST}:${PORT}`);
   if (PIN) console.log(`  PIN de acceso: ${PIN === 'lagos' ? 'lagos (cámbialo en config.json)' : '(definido en config.json)'}`);
-  console.log(`  Canales: ${config.rooms.map((r) => r.emoji + ' ' + r.name).join('  ')}\n`);
+  console.log(`  Canales: ${config.rooms.map((r) => r.emoji + ' ' + r.name).join('  ')}`);
+  console.log(`  Avisos prioritarios: ${ALERTS_ENABLED ? 'sí' : 'no'}\n`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
