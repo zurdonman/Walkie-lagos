@@ -1,0 +1,20 @@
+{
+  "name": "Walkie Lagos",
+  "short_name": "Walkie",
+  "description": "Radio interna push-to-talk para el restaurante.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e1116",
+  "theme_color": "#0e1116",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

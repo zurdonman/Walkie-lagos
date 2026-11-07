@@ -1,0 +1,22 @@
+{
+  "name": "walkie-lagos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Walkie-talkie push-to-talk para restaurantes: canales, audio en vivo y chat. Alternativa libre a Zello.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "https": "node server.js --https",
+    "cert": "bash scripts/gen-cert.sh",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}
