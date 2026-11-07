@@ -46,11 +46,12 @@ const https = require('node:https');
 const crypto = require('node:crypto');
 const express = require('express');
 const { WebSocketServer } = require('ws');
+const { loadConfig } = require('./lib/config');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 
-const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const { config, warnings: configWarnings } = loadConfig();
 const ROOMS = new Map(config.rooms.map((r) => [r.id, r]));
 const DEFAULT_ROOM = config.rooms[0]?.id || 'general';
 const MAX_TALK_MS = Number(config.maxTalkSeconds || 45) * 1000;
@@ -245,7 +246,15 @@ app.get('/api/config', (_req, res) => {
   });
 });
 
-app.get('/healthz', (_req, res) => res.json({ ok: true, online: clients.size }));
+app.get('/healthz', (_req, res) =>
+  res.json({
+    ok: true,
+    online: clients.size,
+    rooms: config.rooms.length,
+    uptimeSeconds: Math.round(process.uptime()),
+    version: require('./package.json').version,
+  })
+);
 
 let server;
 if (process.argv.includes('--https')) {
@@ -562,7 +571,12 @@ server.listen(PORT, HOST, () => {
   console.log(`  Escuchando en ${scheme}://${HOST}:${PORT}`);
   if (PIN) console.log(`  PIN de acceso: ${PIN === 'lagos' ? 'lagos (cámbialo en config.json)' : '(definido en config.json)'}`);
   console.log(`  Canales: ${config.rooms.map((r) => r.emoji + ' ' + r.name).join('  ')}`);
-  console.log(`  Avisos prioritarios: ${ALERTS_ENABLED ? 'sí' : 'no'}\n`);
+  console.log(`  Avisos prioritarios: ${ALERTS_ENABLED ? 'sí' : 'no'}`);
+  if (configWarnings.length) {
+    console.log('');
+    for (const warning of configWarnings) console.log(`  ⚠️  ${warning}`);
+  }
+  console.log('');
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
