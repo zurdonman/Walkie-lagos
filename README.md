@@ -21,6 +21,22 @@ El protocolo está especificado en `lan/protocol.mjs` (paquete binario `WLK1`, g
 `239.255.43.43:45454`) e implementado en Kotlin en `android/.../LanPacket.kt`. Se prueba de
 verdad con dos nodos por multicast: `node test/lan.test.mjs`.
 
+La app fija la **interfaz de la wifi** para enviar y para unirse al grupo (si no, Android
+puede usar los datos móviles y no se oye a nadie), no exige que esa wifi tenga internet y
+deja escrito en el registro y en pantalla por dónde está escuchando
+("Radio wifi: unido al grupo en wlan0 …").
+
+### Si los móviles no se oyen en modo wifi
+
+1. Los dos tienen que estar en **la misma wifi** (no uno en datos móviles).
+2. El router debe permitir el tráfico entre dispositivos: si tiene activado
+   **"aislamiento de clientes"** (AP isolation / "aislar clientes wifi"), los móviles no
+   se ven entre sí. Se desactiva en la configuración del router.
+3. Algunas redes de invitados y de hoteles también lo bloquean.
+4. En la app, el texto bajo el nombre del canal dice dónde está escuchando. En el registro
+   (`Descargas/log walkie`) aparecen las líneas `Radio wifi: …` y, cuando alguien más está
+   en la wifi, `Radio wifi: se oye a …`.
+
 ## Dos formas de usarlo
 
 - **En el móvil (APK de Android)**, instalado como una app: carpeta [`android/`](android/README.md).
