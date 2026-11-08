@@ -73,12 +73,12 @@ object Pcm {
         return bytes
     }
 
-    fun unpack(bytes: ByteArray): ShortArray {
-        val count = bytes.size / 2
+    fun unpack(bytes: ByteArray, offset: Int = 0, length: Int = bytes.size - offset): ShortArray {
+        val count = length / 2
         val out = ShortArray(count)
         for (i in 0 until count) {
-            val low = bytes[i * 2].toInt() and 0xFF
-            val high = bytes[i * 2 + 1].toInt()
+            val low = bytes[offset + i * 2].toInt() and 0xFF
+            val high = bytes[offset + i * 2 + 1].toInt()
             out[i] = ((high shl 8) or low).toShort()
         }
         return out

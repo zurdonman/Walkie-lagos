@@ -24,5 +24,12 @@
     <string name="need_name">Escribe tu nombre</string>
     <string name="bad_server">Dirección no válida. Ejemplo: 192.168.1.50</string>
     <string name="no_mic">Sin micrófono no se puede hablar, pero el chat funciona igual</string>
+    <string name="mode_server">Con servidor</string>
+    <string name="mode_wifi">Solo wifi</string>
+    <string name="help_server">Necesita un ordenador o servidor en la red (o internet). Pide la dirección y el PIN al encargado.</string>
+    <string name="help_wifi">Sin servidor ni internet: solo la wifi del local. Todos los móviles con la app abierta en el mismo canal se oyen entre sí. No hace falta configurar nada.</string>
+    <string name="wifi_hint">Modo wifi: no hace falta dirección ni PIN</string>
+    <string name="need_wifi">Conéctate a la wifi del local para usar este modo</string>
+    <string name="peers_online">%1$d en la wifi</string>
     <string name="login_help">Pide la dirección del servidor y el PIN al encargado. Si el servidor está en la wifi del local, basta con la IP (por ejemplo 192.168.1.50).</string>
 </resources>

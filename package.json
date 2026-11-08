@@ -9,7 +9,7 @@
     "start": "node server.js",
     "https": "node server.js --https",
     "cert": "bash scripts/gen-cert.sh",
-    "test": "node test/protocol.test.mjs && node test/audio.test.mjs && node test/ui.test.mjs",
+    "test": "node test/protocol.test.mjs && node test/lan.test.mjs && node test/audio.test.mjs && node test/ui.test.mjs",
     "check:android": "python3 scripts/check-android.py",
     "test:all": "npm test && npm run check:android"
   },

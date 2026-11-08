@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.view.MotionEvent
@@ -31,6 +32,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     private val prefs by lazy { getSharedPreferences("walkie", Context.MODE_PRIVATE) }
 
     private var pending: Settings? = null
+    private var lanMode = false
     private var connected = false
     private var peerTalking: String? = null
     private var talking = false
@@ -40,6 +42,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             if (granted[Manifest.permission.RECORD_AUDIO] == false) {
                 toast(getString(R.string.no_mic))
             }
+            pendingLan?.let { (name, room) -> startLan(name, room) }
             pending?.let { startRadio(it.server, it.name, it.pin, it.room) }
         }
 
@@ -54,6 +57,19 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         prefs.getString("server", null)?.let { binding.serverField.setText(it) }
         prefs.getString("pin", null)?.let { binding.pinField.setText(it) }
         prefs.getString("room", null)?.let { binding.roomField.setText(it) }
+
+        if (prefs.getString("mode", "server") == "wifi") {
+            binding.modeWifi.isChecked = true
+            lanMode = true
+        } else {
+            binding.modeServer.isChecked = true
+        }
+        binding.modeGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            lanMode = checkedId == R.id.modeWifi
+            paintMode()
+        }
+        paintMode()
 
         binding.enterButton.setOnClickListener { enter() }
         binding.leaveButton.setOnClickListener { leave() }
@@ -71,17 +87,93 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     override fun onStart() {
         super.onStart()
-        VoiceService.listener = { event -> runOnUiThread { handle(event) } }
+        val handler = { event: Event -> runOnUiThread { handle(event) } }
+        if (lanMode) LanService.listener = handler else VoiceService.listener = handler
     }
 
     override fun onStop() {
         super.onStop()
         VoiceService.listener = null
+        LanService.listener = null
+    }
+
+    private var pendingLan: Pair<String, Int>? = null
+
+    /** Muestra u oculta lo que sobra según el modo elegido. */
+    private fun paintMode() {
+        binding.serverBox.visibility = if (lanMode) View.GONE else View.VISIBLE
+        binding.pinBox.visibility = if (lanMode) View.GONE else View.VISIBLE
+        binding.loginHelp.text = getString(if (lanMode) R.string.help_wifi else R.string.help_server)
+        val rooms = if (lanMode) Lan.ROOMS else listOf(getString(R.string.default_room))
+        binding.roomField.setSimpleItems(rooms.toTypedArray())
+        binding.roomField.setText(if (lanMode) Lan.ROOMS.first() else getString(R.string.default_room))
+    }
+
+    private fun lanRoomIndex(): Int {
+        val name = binding.roomField.text?.toString().orEmpty()
+        val index = Lan.ROOMS.indexOfFirst { it.equals(name, ignoreCase = true) }
+        return if (index < 0) 0 else index
+    }
+
+    /** Modo sin servidor: nombre, canal y a hablar por la wifi. */
+    private fun enterLan() {
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        if (!wifi.isWifiEnabled) {
+            toast(getString(R.string.need_wifi))
+            return
+        }
+        val name = binding.nameField.text?.toString()?.trim().orEmpty()
+        if (name.isEmpty()) {
+            binding.nameField.error = getString(R.string.need_name)
+            return
+        }
+        prefs.edit()
+            .putString("name", name)
+            .putString("mode", "wifi")
+            .putInt("lanRoom", lanRoomIndex())
+            .apply()
+
+        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val missing = needed.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            startLan(name, lanRoomIndex())
+        } else {
+            pendingLan = name to lanRoomIndex()
+            askPermissions.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun startLan(name: String, room: Int) {
+        val nodeId = prefs.getString("nodeId", null) ?: Lan.hex(Lan.newNodeId()).also {
+            prefs.edit().putString("nodeId", it).apply()
+        }
+        val intent = Intent(this, LanService::class.java).apply {
+            action = LanService.ACTION_START
+            putExtra(LanService.EXTRA_NAME, name)
+            putExtra(LanService.EXTRA_ROOM, room)
+            putExtra(LanService.EXTRA_NODE_ID, nodeId)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+
+        LanService.listener = { event -> runOnUiThread { handle(event) } }
+        binding.login.visibility = View.GONE
+        binding.stage.visibility = View.VISIBLE
+        binding.chatBar.visibility = View.VISIBLE
+        binding.online.text = getString(R.string.peers_online, 1)
+        binding.roomLabel.text = Lan.ROOMS.getOrElse(room) { Lan.ROOMS.first() }
     }
 
     // ------------------------------------------------------------------ entrar
 
+    /** En modo wifi no hay dirección ni PIN: solo nombre y canal. */
     private fun enter() {
+        if (lanMode) return enterLan()
+
         val server = binding.serverField.text?.toString()?.trim().orEmpty()
         val name = binding.nameField.text?.toString()?.trim().orEmpty()
         val pin = binding.pinField.text?.toString().orEmpty()
@@ -142,6 +234,8 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     private fun leave() {
         startService(Intent(this, VoiceService::class.java).apply { action = VoiceService.ACTION_STOP })
+        startService(Intent(this, LanService::class.java).apply { action = LanService.ACTION_STOP })
+        LanService.listener = null
         connected = false
         talking = false
         peerTalking = null
@@ -178,10 +272,18 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         return true
     }
 
-    private fun talkIntent(on: Boolean) = Intent(this, VoiceService::class.java).apply {
-        action = VoiceService.ACTION_TALK
-        putExtra(VoiceService.EXTRA_ON, on)
-    }
+    private fun talkIntent(on: Boolean): Intent =
+        if (lanMode) {
+            Intent(this, LanService::class.java).apply {
+                action = LanService.ACTION_TALK
+                putExtra(LanService.EXTRA_ON, on)
+            }
+        } else {
+            Intent(this, VoiceService::class.java).apply {
+                action = VoiceService.ACTION_TALK
+                putExtra(VoiceService.EXTRA_ON, on)
+            }
+        }
 
     // ------------------------------------------------------------------ eventos
 
@@ -200,7 +302,8 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                 paintPeers(event.peers)
                 binding.online.text = getString(R.string.online, event.peers.size)
             }
-            is Event.Presence -> binding.online.text = getString(R.string.online, event.online)
+            is Event.Presence -> binding.online.text =
+                if (lanMode) getString(R.string.peers_online, event.online) else getString(R.string.online, event.online)
             is Event.TalkAccept -> {
                 if (!talking) startService(talkIntent(false)) // turno que ya no queremos
             }
@@ -253,7 +356,18 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     private fun sendChat() {
         val text = binding.chatInput.text?.toString()?.trim().orEmpty()
         if (text.isEmpty()) return
-        if (!VoiceServiceBus.sendChat(text)) {
+        val sent = if (lanMode) {
+            val radio = LanService.sender
+            if (radio == null) {
+                false
+            } else {
+                radio.sendChat(text)
+                true
+            }
+        } else {
+            VoiceServiceBus.sendChat(text)
+        }
+        if (!sent) {
             toast(getString(R.string.not_connected))
             return
         }

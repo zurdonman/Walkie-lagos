@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- El servidor del restaurante suele estar en la wifi, con IP local. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <application
         android:allowBackup="false"

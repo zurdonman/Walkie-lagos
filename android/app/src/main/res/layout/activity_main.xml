@@ -34,7 +34,33 @@
                 android:text="@string/subtitle"
                 android:textColor="@color/muted" />
 
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/modeGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/modeServer"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/mode_server" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/modeWifi"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/mode_wifi" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/serverBox"
                 style="@style/Widget.Walkie.Field"
                 android:hint="@string/server_hint">
 
@@ -56,6 +82,7 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/pinBox"
                 style="@style/Widget.Walkie.Field"
                 android:hint="@string/pin_hint"
                 app:endIconMode="password_toggle">
@@ -86,6 +113,7 @@
                 android:textSize="16sp" />
 
             <TextView
+                android:id="@+id/loginHelp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="20dp"
