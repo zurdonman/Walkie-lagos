@@ -76,6 +76,12 @@ jobs:
             case "$line" in NO\ ENCONTRADO*) echo "::warning title=APK::${line}" ;; esac
           done
           "$AAPT" dump permissions android/app/build/outputs/apk/debug/app-debug.apk >> /tmp/badging.txt
+          # El modelo de voz tiene que ir dentro, si no la transcripción no existe.
+          if unzip -l artifacts/walkie-lagos.apk | grep -q "assets/vosk-es/"; then
+            echo "::notice title=Transcripción::modelo de voz incluido en el APK"
+          else
+            echo "::warning title=Transcripción::el APK sale SIN modelo de voz; la voz no se transcribirá"
+          fi
 
       - name: Publicar el error como anotaciones
         if: failure()
