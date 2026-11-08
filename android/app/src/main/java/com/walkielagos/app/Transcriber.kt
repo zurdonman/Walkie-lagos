@@ -41,6 +41,8 @@ class Transcriber(private val context: Context) {
     private fun ensureModel(): Boolean {
         if (model != null) return true
         if (failed) return false
+        // Todavía se está copiando desde el APK: no es un fallo, se intentará luego.
+        if (!installed()) return false
         return try {
             model = Model(modelDir().absolutePath)
             true
@@ -50,16 +52,21 @@ class Transcriber(private val context: Context) {
         }
     }
 
-    /** Instala el modelo desde assets si viene dentro del APK. */
-    fun installIfBundled(assetsPath: String = "vosk-es"): Boolean {
-        return try {
-            val children = context.assets.list(assetsPath) ?: return false
-            if (children.isEmpty()) return false
-            if (installed()) return true
-            copyDir(assetsPath, modelDir())
-            true
-        } catch (error: Throwable) {
-            false
+    /**
+     * Instala el modelo desde assets si viene dentro del APK. Se hace en segundo
+     * plano: son unos 40 MB y bloquear la pantalla de inicio sería un cuelgue.
+     */
+    fun installIfBundled(assetsPath: String = "vosk-es") {
+        if (installed()) return
+        executor.execute {
+            try {
+                val children = context.assets.list(assetsPath)
+                if (children.isNullOrEmpty() || installed()) return@execute
+                copyDir(assetsPath, modelDir())
+                ensureModel()
+            } catch (error: Throwable) {
+                failed = true
+            }
         }
     }
 

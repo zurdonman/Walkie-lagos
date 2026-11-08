@@ -43,6 +43,12 @@ android {
         jniLibs.useLegacyPackaging = true
     }
 
+    // El modelo de voz son miles de archivos pequeños: si se comprimen, Android 11+
+    // no puede abrirlos desde assets y la transcripción no arrancaría.
+    androidResources {
+        noCompress += listOf("mdl", "fst", "int", "txt", "conf", "dict", "symbols")
+    }
+
     // El modelo de voz español (unos 40 MB) se copia a assets si está descargado;
     // si no, la app funciona igual, solo sin transcripción.
     sourceSets.getByName("main") {

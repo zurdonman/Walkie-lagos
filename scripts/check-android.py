@@ -138,6 +138,7 @@ ok('installIfBundled' in tr, 'el modelo se instala desde assets en el móvil')
 ok('acceptWaveForm(pcm.copyOfRange' in tr, 'Vosk recibe tramos de 1 s (no pares byte+len)')
 gradle = open('android/app/build.gradle.kts').read()
 ok('vosk-android' in gradle and 'net.java.dev.jna:jna' in gradle, 'Vosk con su dependencia JNA')
+ok('noCompress' in gradle, 'el modelo va sin comprimir en el APK (Android 11+)')
 ok('Transcriber.Listener' in open('android/app/src/main/java/com/walkielagos/app/LanService.kt').read()
    and 'Transcriber.Listener' in open('android/app/src/main/java/com/walkielagos/app/VoiceService.kt').read(),
    'la transcripción se engancha en los dos modos')
@@ -155,6 +156,10 @@ ok('sendChat(text)' in lan_svc and 'sendChat(text)' in voice_svc,
    'quien habla transcribe y manda el texto a los demás')
 ok('AUDIO_NOTE' in lan_svc, 'si no hay transcripción queda el aviso de voz')
 ok('ownPcm' in lan_svc and 'ownPcm' in voice_svc, 'se acumula lo que dice el hablante')
+
+ok('installIfBundled' in tr and 'executor.execute' in tr.split('installIfBundled')[1][:800],
+   'la copia del modelo no bloquea la pantalla')
+ok('if (!installed()) return false' in tr, 'mientras se copia, no se da por roto')
 
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)
