@@ -11,6 +11,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Necesario para publicar el APK como Release (descarga con un clic).
+permissions:
+  contents: write
+
 jobs:
   apk:
     name: APK de depuración
@@ -60,11 +64,18 @@ jobs:
           path: artifacts/walkie-lagos.apk
           if-no-files-found: error
 
-      - name: Publicar en Releases (solo en main)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      - name: Publicar el APK como Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-${{ github.run_number }}
-          name: Walkie Lagos APK ${{ github.run_number }}
-          body: APK generado automáticamente desde el commit ${{ github.sha }}.
+          name: Walkie Lagos APK ${{ github.run_number }} (${{ github.ref_name }})
+          body: |
+            APK de depuración generado automáticamente.
+
+            Commit: ${{ github.sha }}
+            Rama: ${{ github.ref_name }}
+
+            Descarga el archivo `walkie-lagos.apk`, pásalo al móvil y ábrelo para instalar.
           files: artifacts/walkie-lagos.apk
+          make_latest: true
