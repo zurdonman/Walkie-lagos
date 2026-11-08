@@ -16,6 +16,8 @@ object Lan {
     const val PORT = 45454
     const val VERSION: Byte = 1
     const val MAX_NAME = 16
+    /** Texto por paquete: 16 cabecera + 16 nombre + 1200 < 1400 (cabe sin fragmentar). */
+    const val MAX_TEXT_BYTES = 1200
     const val SAMPLE_RATE = 16_000
     const val FRAME_BYTES = SAMPLE_RATE / 50 * 2 // 20 ms = 640 bytes
     val MAGIC = byteArrayOf('W'.code.toByte(), 'L'.code.toByte(), 'K'.code.toByte(), '1'.code.toByte())
@@ -27,7 +29,8 @@ object Lan {
     const val TYPE_HEARTBEAT: Byte = 0x48
     const val TYPE_LEAVE: Byte = 0x4C
 
-    val ROOMS = listOf("General", "Cocina", "Sala", "Barra")
+    /** El índice es lo que viaja en el paquete: no reordenar (ver lan/protocol.mjs). */
+    val ROOMS = listOf("General", "Cocina", "Comedor", "Barra", "Terraza")
 
     data class Packet(
         val type: Byte,

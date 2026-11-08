@@ -14,6 +14,7 @@ import dgram from 'node:dgram';
 import os from 'node:os';
 import {
   GROUP,
+  MAX_TEXT_BYTES,
   PORT,
   ROOMS,
   TYPE,
@@ -125,7 +126,9 @@ export class LanRadio {
   }
 
   sendChat(text) {
-    this.send(TYPE.chat, Buffer.from(String(text).slice(0, 200), 'utf8'));
+    // Antes se recortaba a 200 caracteres sin avisar. Ahora cabe un mensaje entero.
+    const bytes = Buffer.from(String(text), 'utf8');
+    this.send(TYPE.chat, bytes.subarray(0, MAX_TEXT_BYTES));
   }
 
   setRoom(room) {

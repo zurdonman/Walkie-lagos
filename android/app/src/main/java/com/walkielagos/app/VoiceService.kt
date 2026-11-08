@@ -29,6 +29,7 @@ class VoiceService : Service(), VoiceClient.Listener {
     companion object {
         const val ACTION_START = "com.walkielagos.app.START"
         const val ACTION_STOP = "com.walkielagos.app.STOP"
+        const val ACTION_FLOATING = "com.walkielagos.app.FLOATING"
         const val ACTION_TALK = "com.walkielagos.app.TALK"
         const val EXTRA_ON = "on"
         const val EXTRA_SERVER = "server"
@@ -64,6 +65,8 @@ class VoiceService : Service(), VoiceClient.Listener {
 
     @Volatile
     private var speaking = false
+    private var floating: FloatingButton? = null
+    private val prefs by lazy { getSharedPreferences(FloatingButton.PREFS, MODE_PRIVATE)
 
     private val inbox = ConcurrentLinkedQueue<ByteArray>()
     private var nextPlayAtNanos = 0L
@@ -79,6 +82,7 @@ class VoiceService : Service(), VoiceClient.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_TALK -> setTalking(intent?.getBooleanExtra(EXTRA_ON, false) ?: false)
+            ACTION_FLOATING -> enableFloating(intent?.getBooleanExtra(EXTRA_ON, false) ?: false)
             ACTION_STOP -> {
                 disconnect()
                 stopSelf()
@@ -98,6 +102,8 @@ class VoiceService : Service(), VoiceClient.Listener {
                     WalkieLog.i("Servicio servidor: conectando a $server como ${newSettings.name}")
                     startAudio()
                     myName = newSettings.name
+                    if (prefs.getBoolean(LanService.KEY_FLOATING, false)) enableFloating(true)
+                    VoiceServiceBus.switcher = { room -> client?.switchRoom(room) }
                     transcriber = Transcriber(this).also { it.installIfBundled() }
                     client = VoiceClient(newSettings, this).also { it.connect() }
                     VoiceServiceBus.sender = { text -> client?.sendChat(text) ?: false }
@@ -116,6 +122,8 @@ class VoiceService : Service(), VoiceClient.Listener {
 
     private fun disconnect() {
         VoiceServiceBus.sender = null
+        floating?.hide()
+        floating = null
         transcriber?.close()
         transcriber = null
         setTalking(false)
@@ -204,9 +212,42 @@ class VoiceService : Service(), VoiceClient.Listener {
 
     // ----------------------------------------------------------------- audio
 
+    /** Pone o quita el botón que flota sobre otras apps. */
+    fun enableFloating(on: Boolean): Boolean {
+        prefs.edit().putBoolean(LanService.KEY_FLOATING, on).apply()
+        if (!on) {
+            floating?.hide()
+            floating = null
+            return true
+        }
+        if (floating != null) return true
+        if (!FloatingButton.canShow(this)) {
+            listener?.invoke(Event.Failure(getString(R.string.float_need_permission)))
+            return false
+        }
+        val button = FloatingButton(this)
+        button.listener = object : FloatingButton.Listener {
+            override fun onTalkStart() = setTalking(true)
+            override fun onTalkStop() = setTalking(false)
+            override fun onOpenApp() {
+                runCatching {
+                    startActivity(
+                        Intent(this@VoiceService, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    )
+                }
+            }
+        }
+        if (!button.show()) return false
+        floating = button
+        button.setLabel(roomName.ifEmpty { "General" })
+        return true
+    }
+
     private fun setTalking(on: Boolean) {
         if (on == speaking) return
         speaking = on
+        floating?.setTalking(on)
         if (on) {
             ownPcm.reset()
             client?.requestTalk()

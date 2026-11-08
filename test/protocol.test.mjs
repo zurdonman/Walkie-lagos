@@ -75,7 +75,11 @@ const say = (client, payload) => client.ws.send(JSON.stringify(payload));
 try {
   console.log('\nENTRAR');
   const cfg = await (await fetch(`${BASE}/api/config`)).json();
-  check(cfg.rooms.length === 4 && cfg.requiresPin === true, 'la API da canales y pide PIN');
+  check(cfg.rooms.length === 5 && cfg.requiresPin === true, `la API da los 5 canales (${cfg.rooms.map((r) => r.name).join(', ')}) y pide PIN`);
+  check(
+    ['general', 'cocina', 'comedor', 'barra', 'terraza'].every((id) => cfg.rooms.some((r) => r.id === id)),
+    'están general, cocina, comedor, barra y terraza',
+  );
 
   const marta = await join('Marta', 'cocina');
   const luis = await join('Luis', 'cocina');

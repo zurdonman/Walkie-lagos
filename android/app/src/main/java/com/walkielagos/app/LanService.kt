@@ -32,11 +32,16 @@ class LanService : Service(), LanRadio.Listener {
         const val ACTION_START = "com.walkielagos.app.LAN_START"
         const val ACTION_STOP = "com.walkielagos.app.LAN_STOP"
         const val ACTION_TALK = "com.walkielagos.app.LAN_TALK"
+        const val ACTION_ROOM = "com.walkielagos.app.LAN_ROOM"
+        const val ACTION_FLOATING = "com.walkielagos.app.LAN_FLOATING"
         const val EXTRA_ON = "on"
         const val EXTRA_NAME = "name"
         const val EXTRA_ROOM = "room"
         const val EXTRA_NODE_ID = "nodeId"
         private const val CHANNEL_ID = "walkie"
+
+        /** Botón flotante activado (se recuerda entre arranques). */
+        const val KEY_FLOATING = "floating"
 
         @Volatile
         var listener: ((Event) -> Unit)? = null
@@ -54,6 +59,7 @@ class LanService : Service(), LanRadio.Listener {
     private var recorderThread: Thread? = null
     private var playerThread: Thread? = null
     private var sequence = 0
+    private var floating: FloatingButton? = null
 
     @Volatile
     private var speaking = false
@@ -73,6 +79,14 @@ class LanService : Service(), LanRadio.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_TALK -> setTalking(intent?.getBooleanExtra(EXTRA_ON, false) ?: false)
+            ACTION_ROOM -> {
+                val room = intent?.getIntExtra(EXTRA_ROOM, 0) ?: 0
+                currentRoom = room
+                radio?.setRoom(room)
+                updateFloatingLabel()
+                listener?.invoke(Event.RoomChanged(room, Lan.ROOMS.getOrElse(room) { "General" }))
+            }
+            ACTION_FLOATING -> enableFloating(intent?.getBooleanExtra(EXTRA_ON, false) ?: false)
             ACTION_STOP -> {
                 close()
                 stopSelf()
@@ -104,6 +118,7 @@ class LanService : Service(), LanRadio.Listener {
                 WalkieLog.i("Servicio wifi: canal ${Lan.ROOMS.getOrElse(room) { "?" }}, nombre $name")
                 startAudio()
                 created.start()
+                if (prefs.getBoolean(KEY_FLOATING, false)) enableFloating(true)
             }
         }
         return START_STICKY
@@ -121,12 +136,16 @@ class LanService : Service(), LanRadio.Listener {
         setTalking(false)
         radio?.stop()
         radio = null
+        floating?.hide()
+        floating = null
         stopAudio()
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     private fun setTalking(on: Boolean) {
         if (on == speaking) return
+        floating?.setTalking(on)
+        updateFloatingLabel()
         speaking = on
         radio?.setTalking(on)
         if (on) {
@@ -172,6 +191,59 @@ class LanService : Service(), LanRadio.Listener {
         store.add(roomName, myName.ifBlank { "Móvil" }, texto, true)
         listener?.invoke(Event.Chat(ChatEntry(myName.ifBlank { "Móvil" }, texto, System.currentTimeMillis(), true)))
         radio?.sendChat(texto)
+    }
+
+    // -------------------------------------------------------- botón flotante
+
+    private val prefs by lazy { getSharedPreferences(FloatingButton.PREFS, MODE_PRIVATE) }
+
+    /** Pone o quita el botón que flota sobre otras apps. */
+    fun enableFloating(on: Boolean): Boolean {
+        prefs.edit().putBoolean(KEY_FLOATING, on).apply()
+        if (!on) {
+            floating?.hide()
+            floating = null
+            return true
+        }
+        if (floating != null) return true
+        if (!FloatingButton.canShow(this)) {
+            WalkieLog.w("Flotante: falta el permiso para mostrarlo sobre otras apps")
+            listener?.invoke(Event.Failure(getString(R.string.float_need_permission)))
+            return false
+        }
+        val button = FloatingButton(this)
+        button.listener = object : FloatingButton.Listener {
+            override fun onTalkStart() {
+                if (radio?.talking == true) return
+                setTalking(true)
+            }
+
+            override fun onTalkStop() = setTalking(false)
+
+            override fun onOpenApp() {
+                runCatching {
+                    startActivity(
+                        Intent(this@LanService, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    )
+                }
+            }
+        }
+        val ok = button.show()
+        if (!ok) {
+            listener?.invoke(Event.Failure(getString(R.string.float_need_permission)))
+            return false
+        }
+        floating = button
+        updateFloatingLabel()
+        WalkieLog.i("Flotante: botón visible sobre otras apps")
+        return true
+    }
+
+    private fun updateFloatingLabel() {
+        val nombre = Lan.ROOMS.getOrElse(currentRoom) { "General" }
+        val estado = if (radio?.talking == true) "hablando" else "$nombre"
+        floating?.setLabel(estado)
     }
 
     // ------------------------------------------------------------ LanRadio.Listener
@@ -230,6 +302,7 @@ class LanService : Service(), LanRadio.Listener {
     private var lastStatus = ""
 
     override fun onPeerCount(count: Int) {
+        if (floating != null) updateFloatingLabel()
         val status = radio?.status.orEmpty()
         if (status.isNotBlank() && status != lastStatus) {
             lastStatus = status

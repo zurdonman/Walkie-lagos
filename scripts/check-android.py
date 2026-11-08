@@ -9,6 +9,7 @@ audio, los textos/ids del layout y la lógica de direcciones del servidor.
 import re
 import sys
 import os
+import json
 
 fail = []
 def ok(cond, msg):
@@ -204,6 +205,30 @@ ok('getUriForFile' in main2 and 'getOrNull()' in main2, 'enviar el registro no p
 paths = open('android/app/src/main/res/xml/file_paths.xml').read()
 ok('external-path' in paths, 'el archivo de Descargas se puede enviar')
 
+print("\nCANALES Y BOTÓN FLOTANTE")
+lan_pkt = open('android/app/src/main/java/com/walkielagos/app/LanPacket.kt').read()
+proto = open('lan/protocol.mjs').read()
+import re as _re
+rooms_kt = _re.search(r'val ROOMS = listOf\(([^)]*)\)', lan_pkt).group(1)
+rooms_js = _re.findall(r"name: '([^']+)'", proto.split('export const ROOMS')[1].split('];')[0])
+nombres_kt = [x.strip().strip('"') for x in rooms_kt.split(',')]
+ok(nombres_kt == rooms_js, f'los canales coinciden en Android y en el protocolo ({", ".join(nombres_kt)})')
+ok('Comedor' in nombres_kt and 'Barra' in nombres_kt, 'están Comedor y Barra')
+cfg_rooms = [r['id'] for r in json.load(open('config.json'))['rooms']]
+ok(cfg_rooms == ['general','cocina','comedor','barra','terraza'], 'el servidor ofrece los mismos canales')
+ok('MAX_TEXT_BYTES' in proto and 'MAX_TEXT_BYTES' in lan_pkt, 'texto largo sin cortar (antes: 200 caracteres)')
+radio2 = open('android/app/src/main/java/com/walkielagos/app/LanRadio.kt').read()
+ok('fun setRoom' in radio2, 'la radio cambia de canal sin reiniciar')
+ok('ACTION_ROOM' in open('android/app/src/main/java/com/walkielagos/app/LanService.kt').read(), 'el servicio acepta el cambio de canal')
+ok('roomButton' in open('android/app/src/main/res/layout/activity_main.xml').read(), 'botón «Canal» en la pantalla')
+float_kt = open('android/app/src/main/java/com/walkielagos/app/FloatingButton.kt').read()
+ok('TYPE_APPLICATION_OVERLAY' in float_kt, 'el botón flotante es una capa sobre otras apps')
+ok('canDrawOverlays' in float_kt, 'pide el permiso de «mostrar sobre otras apps»')
+ok('ACTION_MOVE' in float_kt and 'stopTalking' in float_kt, 'se mantiene pulsado para hablar y se arrastra para moverlo')
+ok('SYSTEM_ALERT_WINDOW' in open('android/app/src/main/AndroidManifest.xml').read(), 'permiso declarado en el manifiesto')
+ok('enableFloating' in lan_svc and 'enableFloating' in open('android/app/src/main/java/com/walkielagos/app/VoiceService.kt').read(),
+   'los dos modos (wifi y servidor) tienen botón flotante')
+
 print("\nCHAT Y LO HABLADO EN EL CHAT")
 layout_txt = open('android/app/src/main/res/layout/activity_main.xml').read()
 ok('@+id/chatBar' in layout_txt and 'layout_weight="1"' in layout_txt.split('@+id/chatBar')[1][:400],
@@ -243,7 +268,7 @@ ok('assembleRelease' in wf3 and 'walkie-lagos-diagnostico.apk' in wf3, 'se publi
 ok('keystore.b64' in wf3, 'los dos van firmados con la misma clave')
 ok(os.path.exists('scripts/keystore.b64'), 'la clave está en el repositorio (APK actualizables)')
 gradle2 = open('android/app/build.gradle.kts').read()
-ok('versionCode = 5' in gradle2, 'la versión sube para poder instalar encima')
+ok('versionCode = 6' in gradle2, 'la versión sube para poder instalar encima')
 
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)

@@ -10,6 +10,15 @@
     <string name="enter">Entrar</string>
     <string name="leave">Salir</string>
     <string name="log_button">Registro</string>
+    <string name="float_button">Botón flotante para hablar</string>
+    <string name="float_show">Botón flotante (hablar sin abrir la app)</string>
+    <string name="float_hide">Quitar el botón flotante</string>
+    <string name="float_need_permission">Hay que permitir «mostrar sobre otras apps» para el botón flotante</string>
+    <string name="float_on">Botón flotante activado</string>
+    <string name="float_off">Botón flotante quitado</string>
+    <string name="change_room">Canal</string>
+    <string name="pick_room">¿A qué canal?</string>
+    <string name="room_changed">Estás en %1$s</string>
     <string name="voz_no_texto">🎙️ voz</string>
     <string name="send">Enviar</string>
     <string name="chat_hint">Mensaje al canal… (lo hablado se escribe solo)</string>

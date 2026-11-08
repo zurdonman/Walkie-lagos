@@ -25,14 +25,18 @@ export const PORT = 45454;
 export const MAGIC = Buffer.from('WLK1');
 export const VERSION = 1;
 export const MAX_NAME = 16;
+// Texto por paquete: 16 cabecera + 16 nombre + 1200 payload < 1400 (no se fragmenta).
+export const MAX_TEXT_BYTES = 1200;
 export const SAMPLE_RATE = 16000;
 export const FRAME_SAMPLES = SAMPLE_RATE / 50; // 640 bytes
 
+// El índice es lo que viaja en el paquete (byte 6): no reordenar sin subir la versión.
 export const ROOMS = [
   { id: 'general', name: 'General', emoji: '📢' },
   { id: 'cocina', name: 'Cocina', emoji: '🍳' },
-  { id: 'sala', name: 'Sala', emoji: '🍽️' },
+  { id: 'comedor', name: 'Comedor', emoji: '🍽️' },
   { id: 'barra', name: 'Barra', emoji: '🍺' },
+  { id: 'terraza', name: 'Terraza', emoji: '☀️' },
 ];
 
 export const TYPE = {

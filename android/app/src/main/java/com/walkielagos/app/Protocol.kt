@@ -45,6 +45,8 @@ sealed interface Event {
     data class Status(val text: String) : Event
     /** Cuántos móviles hay escuchando en la wifi (yo incluido). */
     data class PeerCount(val count: Int) : Event
+    /** Se ha cambiado de canal dentro de la app. */
+    data class RoomChanged(val index: Int, val name: String) : Event
     /** Un trozo de voz del compañero. */
     data class Audio(val bytes: ByteArray) : Event {
         override fun equals(other: Any?) = this === other

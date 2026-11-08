@@ -14,6 +14,8 @@
     <!-- El servidor del restaurante suele estar en la wifi, con IP local. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Botón flotante para hablar sin abrir la app (se pide permiso al activarlo). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- El registro de fallos se deja en Descargas/log walkie (Android 9 y anteriores
          lo piden como permiso; en Android 10+ no hace falta). -->
     <uses-permission

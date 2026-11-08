@@ -119,6 +119,42 @@ check(
   'si no hay transcripción queda el aviso de voz',
 );
 
+console.log('\nCANALES SEPARADOS (general, cocina, comedor, barra, terraza)');
+check(ROOMS.map((r) => r.id).join(',') === 'general,cocina,comedor,barra,terraza', `canales: ${ROOMS.map((r) => r.name).join(', ')}`);
+for (const [indice, canal] of ROOMS.entries()) {
+  const paquete = encode({ type: TYPE.chat, room: canal.id, nodeId: 'aa'.repeat(8), name: 'X', payload: Buffer.from('hola') });
+  check(paquete[6] === indice && decode(paquete).room === canal.id, `${canal.name} viaja en el byte ${indice}`);
+}
+// Comedor y barra están aislados: quien está en comedor no oye barra.
+marta.setRoom('comedor');
+luis.setRoom('barra');
+await wait(400);
+events.a.length = 0;
+events.b.length = 0;
+marta.sendChat('esto es de comedor');
+luis.sendChat('esto es de barra');
+await wait(350);
+// Cada uno oye lo del canal en el que está y no lo del otro.
+check(!events.a.some((e) => e.type === 'chat' && e.text === 'esto es de barra'), 'comedor no recibe lo de barra');
+check(!events.b.some((e) => e.type === 'chat' && e.text === 'esto es de comedor'), 'barra no recibe lo de comedor');
+luis.setRoom('comedor');
+await wait(350);
+events.b.length = 0;
+marta.sendChat('ahora luis está en comedor');
+await wait(300);
+check(events.b.some((e) => e.type === 'chat' && e.text === 'ahora luis está en comedor'), 'al cambiarse a comedor, sí lo recibe');
+
+// Un mensaje largo (una transcripción entera) tiene que llegar completo.
+events.b.length = 0;
+const fraseLarga = 'Vicente escúchame sal un momento a la calle porfa que esto está lleno de gente y no cabe nadie más dentro.';
+marta.sendChat(fraseLarga);
+await wait(300);
+const recibido = events.b.find((e) => e.type === 'chat');
+check(recibido?.text === fraseLarga, `un mensaje de ${fraseLarga.length} caracteres llega entero`);
+marta.setRoom('general');
+luis.setRoom('general');
+await wait(300);
+
 console.log('\nCOLISIÓN: los dos empiezan a hablar a la vez');
 events.a.length = 0;
 events.b.length = 0;

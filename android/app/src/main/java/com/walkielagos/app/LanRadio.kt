@@ -25,7 +25,8 @@ class LanRadio(
     private val context: Context,
     private val nodeId: ByteArray,
     private val name: String,
-    private val room: Int,
+    @Volatile
+    private var room: Int,
     private val listener: Listener,
 ) {
     interface Listener {
@@ -200,6 +201,19 @@ class LanRadio(
         peers.clear()
     }
 
+    /** Cambia de canal: los demás dejan de oírme en el viejo y empiezo en el nuevo. */
+    fun setRoom(newRoom: Int) {
+        if (newRoom == room) return
+        send(Lan.TYPE_LEAVE)
+        room = newRoom
+        speaker = null
+        speakerName = null
+        lastSequence = -1
+        WalkieLog.i("Radio wifi: cambio al canal ${Lan.ROOMS.getOrElse(newRoom) { "?" }}")
+        send(Lan.TYPE_HEARTBEAT)
+        listener.onPeerCount(peers.size)
+    }
+
     fun setTalking(on: Boolean) {
         talking = on
         send(if (on) Lan.TYPE_CLAIM else Lan.TYPE_END)
@@ -208,7 +222,11 @@ class LanRadio(
     /** Manda un bloque de audio de 20 ms. */
     fun sendAudio(pcm16: ByteArray) = send(Lan.TYPE_AUDIO, pcm16)
 
-    fun sendChat(text: String) = send(Lan.TYPE_CHAT, text.toByteArray(Charsets.UTF_8))
+    fun sendChat(text: String) {
+        // Antes se cortaba sin avisar; ahora cabe un mensaje largo (transcripción).
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        send(Lan.TYPE_CHAT, if (bytes.size > Lan.MAX_TEXT_BYTES) bytes.copyOf(Lan.MAX_TEXT_BYTES) else bytes)
+    }
 
     fun sendHeartbeat() = send(Lan.TYPE_HEARTBEAT)
 
@@ -221,7 +239,8 @@ class LanRadio(
     }
 
     private fun receiveLoop(socket: MulticastSocket, group: InetAddress) {
-        val buffer = ByteArray(2048)
+        // Holgura para un paquete grande (texto de 1200 bytes) sin cortarlo.
+        val buffer = ByteArray(4096)
         val packet = DatagramPacket(buffer, buffer.size)
         var ajenos = 0
         var ownSeen = 0

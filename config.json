@@ -13,14 +13,19 @@
       "emoji": "🍳"
     },
     {
-      "id": "sala",
-      "name": "Sala",
+      "id": "comedor",
+      "name": "Comedor",
       "emoji": "🍽️"
     },
     {
       "id": "barra",
       "name": "Barra",
       "emoji": "🍺"
+    },
+    {
+      "id": "terraza",
+      "name": "Terraza",
+      "emoji": "☀️"
     }
   ]
 }

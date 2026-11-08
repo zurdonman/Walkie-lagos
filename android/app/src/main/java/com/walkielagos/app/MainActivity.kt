@@ -94,6 +94,8 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
         binding.enterButton.setOnClickListener { safe("Entrar") { enter() } }
         binding.logButton.setOnClickListener { safe("Registro") { showLogMenu() } }
+        binding.roomButton.setOnClickListener { safe("Canal") { pickRoom() } }
+        binding.floatButton.setOnClickListener { safe("Botón flotante") { toggleFloating() } }
         binding.leaveButton.setOnClickListener { leave() }
         binding.ptt.setOnTouchListener { _, event -> onPushToTalk(event) }
         binding.sendButton.setOnClickListener { safe("Enviar") { sendChat() } }
@@ -212,6 +214,18 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Si venimos de conceder «mostrar sobre otras apps», se pone el botón.
+        if (prefs.getBoolean("floatWanted", false) && FloatingButton.canShow(this)) {
+            prefs.edit().putBoolean("floatWanted", false).apply()
+            safe("Botón flotante") { setFloating(true) }
+        }
+        binding.floatButton.text = getString(
+            if (prefs.getBoolean(LanService.KEY_FLOATING, false)) R.string.float_hide else R.string.float_show
+        )
+    }
+
     override fun onStart() {
         super.onStart()
         val handler = { event: Event -> runOnUiThread { handle(event) } }
@@ -285,7 +299,77 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         chat.setHistory(entries)
     }
 
+    /**
+     * Cambia de canal sin salir: cada canal tiene su audio y su transcripción, y su
+     * historial guardado en este móvil. Lo oyen los que estén en ese mismo canal.
+     */
+    /** Activa o quita el botón que flota sobre otras apps (para hablar sin abrirla). */
+    private fun toggleFloating() {
+        val activo = prefs.getBoolean(LanService.KEY_FLOATING, false)
+        if (!activo && !FloatingButton.canShow(this)) {
+            // Se pide el permiso y se recuerda que el usuario quiere el botón.
+            toast(getString(R.string.float_need_permission))
+            prefs.edit().putBoolean("floatWanted", true).apply()
+            FloatingButton.requestPermission(this)
+            return
+        }
+        setFloating(!activo)
+    }
+
+    private fun setFloating(on: Boolean) {
+        prefs.edit().putBoolean(LanService.KEY_FLOATING, on).apply()
+        if (lanMode) {
+            startService(Intent(this, LanService::class.java).apply {
+                action = LanService.ACTION_FLOATING
+                putExtra(LanService.EXTRA_ON, on)
+            })
+        } else {
+            startService(Intent(this, VoiceService::class.java).apply {
+                action = VoiceService.ACTION_FLOATING
+                putExtra(VoiceService.EXTRA_ON, on)
+            })
+        }
+        binding.floatButton.text = getString(if (on) R.string.float_hide else R.string.float_show)
+        toast(getString(if (on) R.string.float_on else R.string.float_off))
+        WalkieLog.i("Flotante: ${if (on) "activado" else "quitado"}")
+    }
+
+    private fun pickRoom() {
+        val nombres = Lan.ROOMS.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.pick_room)
+            .setSingleChoiceItems(nombres, currentRoom) { dialog, which ->
+                dialog.dismiss()
+                changeRoom(which)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private var currentRoom = 0
+
+    private fun changeRoom(room: Int) {
+        if (room == currentRoom) return
+        currentRoom = room
+        prefs.edit().putInt("roomIndex", room).putString("mode", if (lanMode) "wifi" else "server").apply()
+        WalkieLog.i("Canal: cambio a ${Lan.ROOMS.getOrElse(room) { "?" }}")
+        if (lanMode) {
+            startService(Intent(this, LanService::class.java).apply {
+                action = LanService.ACTION_ROOM
+                putExtra(LanService.EXTRA_ROOM, room)
+            })
+        } else {
+            VoiceServiceBus.switchRoom(Lan.ROOMS.getOrElse(room) { "General" })
+        }
+        binding.roomLabel.text = Lan.ROOMS.getOrElse(room) { "General" }
+        loadHistory(Lan.ROOMS.getOrElse(room) { "General" })
+        binding.incoming.visibility = View.GONE
+        peerTalking = null
+        toast(getString(R.string.room_changed, Lan.ROOMS.getOrElse(room) { "General" }))
+    }
+
     private fun startLan(name: String, room: Int) {
+        currentRoom = room
         val nodeId = prefs.getString("nodeId", null) ?: Lan.hex(Lan.newNodeId()).also {
             prefs.edit().putString("nodeId", it).apply()
         }
@@ -364,6 +448,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
 
+        currentRoom = Lan.ROOMS.indexOfFirst { it.equals(room, ignoreCase = true) }.coerceAtLeast(0)
         loadHistory(room)
         binding.login.visibility = View.GONE
         binding.stage.visibility = View.VISIBLE
@@ -380,6 +465,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         connected = false
         talking = false
         peerTalking = null
+        currentRoom = 0
         chat.clear()
         binding.incoming.visibility = View.GONE
         binding.login.visibility = View.VISIBLE
@@ -434,6 +520,11 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             is Event.PeerCount -> {
                 connected = true
                 binding.online.text = getString(R.string.peers_online, event.count)
+            }
+            is Event.RoomChanged -> {
+                currentRoom = event.index
+                binding.roomLabel.text = event.name
+                loadHistory(event.name)
             }
             is Event.Status -> {
                 binding.status.text = event.text
@@ -539,7 +630,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
         WalkieLog.i("Chat: enviado \"${text.take(60)}\" (${if (lanMode) "wifi" else "servidor"})")
         store.add(
-            if (lanMode) Lan.ROOMS.getOrElse(lanRoomIndex()) { "General" } else binding.roomLabel.text.toString(),
+            if (lanMode) Lan.ROOMS.getOrElse(currentRoom) { "General" } else binding.roomLabel.text.toString(),
             binding.nameField.text?.toString()?.trim().orEmpty(),
             text,
             true,
@@ -596,5 +687,12 @@ object VoiceServiceBus {
     @Volatile
     var sender: ((String) -> Boolean)? = null
 
+    @Volatile
+    var switcher: ((String) -> Unit)? = null
+
     fun sendChat(text: String): Boolean = sender?.invoke(text) ?: false
+
+    fun switchRoom(room: String) {
+        switcher?.invoke(room)
+    }
 }
