@@ -38,13 +38,12 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/walkie-lagos.apk
           ls -lh artifacts/walkie-lagos.apk
 
-      - name: Resumen legible del error
+      - name: Publicar el error como anotaciones
         if: failure()
-        working-directory: android
         run: |
-          echo "## Fallo de compilación" >> $GITHUB_STEP_SUMMARY
-          grep -E "^e: |^w: |error:|FAILURE|What went wrong|Execution failed|Caused by" /tmp/build.log | head -60 >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "^e: |error:|FAILURE|What went wrong|Execution failed|Caused by|^\* What" /tmp/build.log | head -40 | while IFS= read -r line; do
+            echo "::error::${line//'%'/'%25'}"
+          done
 
       - name: Guardar log de compilación
         if: always()
