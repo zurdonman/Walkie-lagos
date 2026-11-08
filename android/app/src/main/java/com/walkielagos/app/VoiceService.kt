@@ -176,7 +176,13 @@ class VoiceService : Service(), VoiceClient.Listener {
     private var peerName = ""
 
     private fun transcribeAndSave(from: String, pcm: ByteArray) {
-        val engine = transcriber ?: return
+        val engine = transcriber
+        if (engine == null || !engine.isAvailable()) {
+            val texto = LanService.AUDIO_NOTE.format((pcm.size / (16_000 * 2)).coerceAtLeast(1))
+            store.add(roomName.ifEmpty { "General" }, from, texto, false)
+            listener?.invoke(Event.Chat(ChatEntry(from, texto, System.currentTimeMillis(), false)))
+            return
+        }
         engine.transcribe(
             0,
             from,
@@ -214,9 +220,14 @@ class VoiceService : Service(), VoiceClient.Listener {
     }
 
     private fun transcribeAndBroadcast(pcm: ByteArray) {
+        val segundos = pcm.size / (16_000 * 2)
         val engine = transcriber
-        if (engine == null) {
-            client?.sendChat(LanService.AUDIO_NOTE.format(pcm.size / (16_000 * 2)))
+        if (engine == null || !engine.isAvailable()) {
+            val texto = LanService.AUDIO_NOTE.format(segundos.coerceAtLeast(1))
+            WalkieLog.w("Servidor: sin transcripción; se anota \"$texto\"")
+            store.add(roomName.ifEmpty { "General" }, myName.ifBlank { "Móvil" }, texto, true)
+            listener?.invoke(Event.Chat(ChatEntry(myName.ifBlank { "Móvil" }, texto, System.currentTimeMillis(), true)))
+            client?.sendChat(texto)
             return
         }
         engine.transcribe(
