@@ -173,10 +173,17 @@ class VoiceService : Service(), VoiceClient.Listener {
 
     private fun transcribeAndSave(from: String, pcm: ByteArray) {
         val engine = transcriber ?: return
-        engine.transcribe(0, from, pcm) { _, speaker, text ->
-            store.add(roomName.ifEmpty { "General" }, speaker, text, false)
-            listener?.invoke(Event.Chat(ChatEntry(speaker, text, System.currentTimeMillis(), false)))
-        }
+        engine.transcribe(
+            0,
+            from,
+            pcm,
+            object : Transcriber.Listener {
+                override fun onTranscribed(roomIndex: Int, speaker: String, text: String) {
+                    store.add(roomName.ifEmpty { "General" }, speaker, text, false)
+                    listener?.invoke(Event.Chat(ChatEntry(speaker, text, System.currentTimeMillis(), false)))
+                }
+            },
+        )
     }
 
     override fun onLevel(level: Float) {

@@ -58,6 +58,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     // Transcripción de voz a texto en el propio móvil, sin internet.
-    implementation("com.alphacephei:vosk-android:0.3.47@aar")
+    implementation("com.alphacephei:vosk-android:0.3.47@aar") { isTransitive = true }
+    // Vosk usa JNA por debajo; sin esto no resuelven sus tipos.
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
     testImplementation("junit:junit:4.13.2")
 }
