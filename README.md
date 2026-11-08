@@ -125,6 +125,10 @@ instala encima del normal, sin desinstalar):
   Si Android no deja escribir en Descargas, se guarda dentro de la app y el botón
   **Registro** (abajo, junto a «Salir») lo envía por el móvil (WhatsApp, correo…).
 
+> Las versiones publicadas antes de este cambio iban firmadas con otra clave: la
+> primera vez hay que **desinstalar** la app antigua; a partir de ahí las
+> actualizaciones se instalan encima y el historial se conserva.
+
 Cómo mandarme el diagnóstico: instala el APK de pruebas, abre la app, reproduce el
 problema y pásame `walkie-crash.txt` (o `walkie-log.txt` si no llegó a generarse el
 otro). Con eso se ve exactamente qué falló y en qué móvil.

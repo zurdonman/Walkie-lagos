@@ -151,8 +151,15 @@ jobs:
               si la app se cierra, `walkie-crash.txt`). Botón **Registro** en la app para
               verlo y enviarlo.
 
-            Pásalos al móvil y ábrelos para instalar. Si ya tienes una versión anterior,
-            se actualiza encima sin perder nada.
+            Pásalos al móvil y ábrelos para instalar.
+
+            **Importante:** si tienes instalada una versión anterior de las de antes
+            (otra firma), Android te dirá «no se ha instalado». Desinstala una vez la
+            antigua y ya desde ahora las actualizaciones se instalan encima sin perder
+            el historial.
+
+            Si la app se cerrara al abrir: instala el de **diagnóstico**, ábrela y
+            mándame el archivo `Descargas/log walkie/walkie-crash.txt`.
           files: |
             artifacts/walkie-lagos.apk
             artifacts/walkie-lagos-diagnostico.apk
