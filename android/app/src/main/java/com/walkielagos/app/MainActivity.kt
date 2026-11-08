@@ -105,7 +105,9 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         binding.pinBox.visibility = if (lanMode) View.GONE else View.VISIBLE
         binding.loginHelp.text = getString(if (lanMode) R.string.help_wifi else R.string.help_server)
         val rooms = if (lanMode) Lan.ROOMS else listOf(getString(R.string.default_room))
-        binding.roomField.setSimpleItems(rooms.toTypedArray())
+        binding.roomField.setAdapter(
+            android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_1, rooms)
+        )
         binding.roomField.setText(if (lanMode) Lan.ROOMS.first() else getString(R.string.default_room))
     }
 

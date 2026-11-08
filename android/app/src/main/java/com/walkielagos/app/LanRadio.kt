@@ -104,7 +104,8 @@ class LanRadio(
         heartbeatThread = null
         try {
             socket?.close()
-        } catch {}
+        } catch (_: Exception) {
+        }
         socket = null
         runCatching { wifiLock?.release() }
         wifiLock = null

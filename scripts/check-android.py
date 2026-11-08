@@ -72,6 +72,11 @@ ids_kotlin = set(re.findall(r'binding\.(\w+)', open('android/app/src/main/java/c
 ids_kotlin -= {'root', 'login', 'stage', 'chatBar'}
 ids_kotlin = {i for i in ids_kotlin if i[0].islower()}  # descarta clases (ActivityMainBinding)
 ids_xml = set(re.findall(r'@\+id/(\w+)', lay))
+print("\nKOTLIN")
+kt_files = __import__('glob').glob('android/app/src/main/java/com/walkielagos/app/*.kt')
+empty_catch = [(f, i + 1) for f in kt_files for i, line in enumerate(open(f).read().splitlines()) if line.strip() == 'catch {}']
+ok(not empty_catch, f'sin catch vacíos (Kotlin no los admite){" -> " + str(empty_catch) if empty_catch else ""}')
+
 print("\nINTERFAZ")
 missing = sorted(ids_kotlin - ids_xml)
 ok(not missing, f'todos los ids que usa el código existen{" (faltan: " + ", ".join(missing) + ")" if missing else ""}')
