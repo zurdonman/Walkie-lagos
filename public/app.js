@@ -1,15 +1,12 @@
-/* Walkie Lagos — cliente push-to-talk
- * Audio: captura -> PCM 16 bits mono -> WebSocket binario -> servidor -> resto del canal
- * Sin dependencias. Todo en un archivo para que sea fácil de mantener.
+/* Walkie Lagos — cliente
+ * Micrófono -> PCM 16 bits mono -> WebSocket -> altavoz del compañero.
+ * Sin dependencias y sin florituras: lo justo para hablar.
  */
 (() => {
-  'use strict';
-
-  // ------------------------------------------------------------------ estado
+  "use strict";
 
   const $ = (id) => document.getElementById(id);
-
-  const LS = {
+  const store = {
     get(key, fallback) {
       try {
         const raw = localStorage.getItem(`walkie.${key}`);
@@ -26,1331 +23,724 @@
   };
 
   const state = {
-    name: LS.get('name', ''),
-    pin: LS.get('pin', ''),
-    room: LS.get('room', ''),
+    name: store.get("name", ""),
+    pin: store.get("pin", ""),
+    room: store.get("room", ""),
     rooms: [],
     you: null,
     joined: false,
     socket: null,
-    reconnectAttempt: 0,
-    reconnectTimer: null,
-    wantTalking: false,
+    retry: 0,
+    retryTimer: null,
     talking: false,
-    peerTalking: null,
-    locked: false,
-    online: 0,
-    /** Destino del PTT: {kind:"room"} | {kind:"dm", id, name} | {kind:"alert"} */
-    target: { kind: 'room' },
-    dmPeerTalking: null,
-    maxAlertSeconds: 25,
-    alertsEnabled: true,
-    settings: Object.assign(
-      { ns: true, ec: true, beeps: true, vibe: false, vol: 130, rate: 16000, mic: '' },
-      LS.get('settings', {})
-    ),
+    wantsTalk: false,
+    peer: null,
+    maxSeconds: 45,
   };
 
-  // --------------------------------------------------------------- utilidades
+  // ------------------------------------------------------------------ avisos
 
   let toastTimer = null;
-  function toast(message, ms = 2600) {
-    const el = $('toast');
-    el.textContent = message;
+  function toast(text) {
+    const el = $("toast");
+    el.textContent = text;
     el.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       el.hidden = true;
-    }, ms);
+    }, 2400);
   }
 
-  function beep(freq = 880, dur = 0.09, gainValue = 0.06) {
-    if (!state.settings.beeps || !audio.ctx) return;
-    try {
-      const ctx = audio.ctx;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(gainValue, ctx.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + dur + 0.02);
-    } catch {}
-  }
-
-  const AVATAR_COLORS = ['#f59e0b', '#22c55e', '#38bdf8', '#a78bfa', '#fb7185', '#34d399', '#f472b6', '#facc15'];
-  function colorFor(name) {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-    return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-  }
-
-  function initials(name) {
-    return name
-      .split(' ')
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0].toUpperCase())
-      .join('');
-  }
-
-  // -------------------------------------------------------------------- audio
+  // ------------------------------------------------------------------- audio
 
   const audio = {
     ctx: null,
-    micStream: null,
-    inputNode: null,
-    workletNode: null,
-    silentGain: null,
-    analyserIn: null,
-    analyserOut: null,
-    nextPlayTime: 0,
-    sources: new Set(),
-    capturing: false,
+    stream: null,
+    capture: false,
     rate: 16000,
+    node: null,
+    fallback: null,
+    next: 0,
+    playing: new Set(),
 
-    async ensureContext() {
+    async context() {
       if (!this.ctx) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) throw new Error('Este navegador no soporta audio Web.');
+        if (!Ctx) throw new Error("Este navegador no puede reproducir audio.");
         this.ctx = new Ctx();
       }
-      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      if (this.ctx.state === "suspended") await this.ctx.resume();
       return this.ctx;
     },
 
-    async ensureMic() {
-      if (this.micStream && this.micStream.getAudioTracks().some((t) => t.readyState === 'live')) {
-        return this.micStream;
-      }
+    async microphone() {
+      if (this.stream?.getAudioTracks().some((t) => t.readyState === "live"))
+        return this.stream;
       if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('Este navegador no permite acceder al micrófono. Abre la app en HTTPS o en localhost.');
+        throw new Error(
+          "Este navegador necesita HTTPS para usar el micrófono.",
+        );
       }
-      const deviceId = state.settings.mic;
-      const constraints = {
+      this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: state.settings.ec,
-          noiseSuppression: state.settings.ns,
+          echoCancellation: true,
+          noiseSuppression: true,
           autoGainControl: true,
-          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
         },
         video: false,
-      };
-      this.micStream = await navigator.mediaDevices.getUserMedia(constraints);
-      return this.micStream;
+      });
+      return this.stream;
     },
 
-    async listMics() {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        return devices.filter((d) => d.kind === 'audioinput');
-      } catch {
-        return [];
-      }
-    },
-
-    async startCapture() {
-      const ctx = await this.ensureContext();
-      const stream = await this.ensureMic();
-      this.rate = Number(state.settings.rate) || 16000;
-
-      if (this.capturing) return;
-
+    async start() {
+      if (this.capture) return;
+      const ctx = await this.context();
+      const stream = await this.microphone();
       const source = ctx.createMediaStreamSource(stream);
-      this.inputNode = source;
+      this.rate = 16000;
 
-      // Medidor de entrada
-      this.analyserIn = ctx.createAnalyser();
-      this.analyserIn.fftSize = 512;
-      source.connect(this.analyserIn);
+      const silence = ctx.createGain();
+      silence.gain.value = 0;
 
-      if (!this.workletReady && !this.workletBroken) {
-        const code = `
-          class WalkieCapture extends AudioWorkletProcessor {
-            constructor(options) {
-              super();
-              const opts = options.processorOptions || {};
-              this.target = opts.targetRate || 16000;
-              this.step = sampleRate / this.target;
-              this.pos = 0;
-              this.prev = 0;
-              this.hasPrev = false;
-              this.packetSize = Math.round(this.target * 0.02);
-              this.out = new Int16Array(this.packetSize);
-              this.outLen = 0;
-            }
-            process(inputs) {
-              const input = inputs[0];
-              if (!input || !input[0]) return true;
-              const ch = input[0];
-              let i = 0;
-              if (!this.hasPrev) { this.prev = ch[0]; this.hasPrev = true; }
-              while (true) {
-                const idx = Math.floor(this.pos);
-                if (idx + 1 >= ch.length) {
-                  this.pos -= ch.length;
-                  this.prev = ch[ch.length - 1];
-                  break;
-                }
-                const frac = this.pos - idx;
-                const a = idx === 0 ? this.prev : ch[idx];
-                const sample = a + (ch[idx + 1] - a) * frac;
-                const s = Math.max(-1, Math.min(1, sample));
-                this.out[this.outLen++] = s < 0 ? s * 0x8000 : s * 0x7fff;
-                if (this.outLen >= this.packetSize) {
-                  const copy = this.out.slice(0);
-                  this.port.postMessage(copy.buffer, [copy.buffer]);
-                  this.outLen = 0;
-                }
-                this.pos += this.step;
-              }
-              return true;
-            }
-          }
-          registerProcessor('walkie-capture', WalkieCapture);
-        `;
+      const post = (buffer) => {
+        if (!state.talking) return;
+        const ws = state.socket;
+        if (ws?.readyState === WebSocket.OPEN) ws.send(buffer);
+      };
+
+      let worklet = false;
+      if (
+        ctx.audioWorklet &&
+        typeof AudioWorkletNode === "function" &&
+        !this.noWorklet
+      ) {
         try {
-          const blob = new Blob([code], { type: 'application/javascript' });
-          const url = URL.createObjectURL(blob);
-          await ctx.audioWorklet.addModule(url);
-          URL.revokeObjectURL(url);
-          this.workletReady = true;
+          if (!this.workletLoaded) {
+            const code = `
+            class Capture extends AudioWorkletProcessor {
+              constructor(options) {
+                super();
+                this.step = sampleRate / (options.processorOptions?.rate || 16000);
+                this.size = Math.round((options.processorOptions?.rate || 16000) * 0.02);
+                this.pos = 0; this.prev = 0; this.ready = false;
+                this.out = new Int16Array(this.size); this.len = 0;
+              }
+              process(inputs) {
+                const ch = inputs[0] && inputs[0][0];
+                if (!ch) return true;
+                if (!this.ready) { this.prev = ch[0]; this.ready = true; }
+                while (true) {
+                  const i = Math.floor(this.pos);
+                  if (i + 1 >= ch.length) { this.pos -= ch.length; this.prev = ch[ch.length - 1]; break; }
+                  const a = i === 0 ? this.prev : ch[i];
+                  const s = Math.max(-1, Math.min(1, a + (ch[i + 1] - a) * (this.pos - i)));
+                  this.out[this.len++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                  if (this.len >= this.size) {
+                    const copy = this.out.slice(0);
+                    this.port.postMessage(copy.buffer, [copy.buffer]);
+                    this.len = 0;
+                  }
+                  this.pos += this.step;
+                }
+                return true;
+              }
+            }
+            registerProcessor('walkie-capture', Capture);
+          `;
+            const url = URL.createObjectURL(
+              new Blob([code], { type: "application/javascript" }),
+            );
+            await ctx.audioWorklet.addModule(url);
+            URL.revokeObjectURL(url);
+            this.workletLoaded = true;
+          }
+          this.node = new AudioWorkletNode(ctx, "walkie-capture", {
+            processorOptions: { rate: this.rate },
+          });
+          this.node.port.onmessage = (event) => post(event.data);
+          source.connect(this.node);
+          this.node.connect(silence).connect(ctx.destination);
+          worklet = true;
         } catch {
-          // Safari antiguo, navegadores sin audioWorklet o contextos raros:
-          // seguimos por el camino clásico (ScriptProcessor).
-          this.workletBroken = true;
+          // Navegador sin audioWorklet utilizable: seguimos por el plan B.
+          this.noWorklet = true;
+          try {
+            this.node?.disconnect();
+          } catch {}
+          this.node = null;
         }
       }
 
-      // El nodo necesita un destino para que el navegador lo procese; lo
-      // mandamos a una ganancia a 0 para no escucharnos a nosotros mismos.
-      this.silentGain = ctx.createGain();
-      this.silentGain.gain.value = 0;
-
-      if (this.workletReady) {
-        this.workletNode = new AudioWorkletNode(ctx, 'walkie-capture', {
-          numberOfInputs: 1,
-          numberOfOutputs: 1,
-          channelCount: 1,
-          processorOptions: { targetRate: this.rate },
-        });
-        this.workletNode.port.onmessage = (event) => {
-          if (!state.talking) return;
-          const ws = state.socket;
-          if (ws && ws.readyState === WebSocket.OPEN) ws.send(event.data);
-          measureOut(event.data);
-        };
-        source.connect(this.workletNode);
-        this.workletNode.connect(this.silentGain).connect(ctx.destination);
-      } else {
-        // Plan B: ScriptProcessor con remuestreo y troceado en 20 ms.
-        const bufferSize = 2048;
-        const proc = ctx.createScriptProcessor(bufferSize, 1, 1);
+      if (!worklet) {
+        // Navegadores sin AudioWorklet: mismo resultado con ScriptProcessor.
+        const proc = ctx.createScriptProcessor(2048, 1, 1);
         const step = ctx.sampleRate / this.rate;
+        const size = Math.round(this.rate * 0.02);
         let pos = 0;
         let prev = 0;
-        let hasPrev = false;
-        const packetSize = Math.round(this.rate * 0.02);
-        let out = new Int16Array(packetSize);
-        let outLen = 0;
+        let ready = false;
+        let out = new Int16Array(size);
+        let len = 0;
         proc.onaudioprocess = (event) => {
           if (!state.talking) return;
           const ch = event.inputBuffer.getChannelData(0);
-          if (!hasPrev) {
+          if (!ready) {
             prev = ch[0];
-            hasPrev = true;
+            ready = true;
           }
           while (true) {
-            const idx = Math.floor(pos);
-            if (idx + 1 >= ch.length) {
+            const i = Math.floor(pos);
+            if (i + 1 >= ch.length) {
               pos -= ch.length;
               prev = ch[ch.length - 1];
               break;
             }
-            const frac = pos - idx;
-            const a = idx === 0 ? prev : ch[idx];
-            const sample = a + (ch[idx + 1] - a) * frac;
-            const v = Math.max(-1, Math.min(1, sample));
-            out[outLen++] = v < 0 ? v * 0x8000 : v * 0x7fff;
-            if (outLen >= packetSize) {
-              const copy = out.slice(0);
-              const ws = state.socket;
-              if (ws && ws.readyState === WebSocket.OPEN) ws.send(copy.buffer);
-              measureOut(copy.buffer);
-              outLen = 0;
+            const a = i === 0 ? prev : ch[i];
+            const s = Math.max(
+              -1,
+              Math.min(1, a + (ch[i + 1] - a) * (pos - i)),
+            );
+            out[len++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            if (len >= size) {
+              post(out.slice(0).buffer);
+              len = 0;
             }
             pos += step;
           }
         };
         source.connect(proc);
-        proc.connect(this.silentGain).connect(ctx.destination);
-        this.scriptNode = proc;
+        proc.connect(silence).connect(ctx.destination);
+        this.fallback = proc;
       }
-      this.capturing = true;
+      this.capture = true;
     },
 
-    stopCapture() {
+    stop() {
       try {
-        this.workletNode?.port?.close?.();
-        this.workletNode?.disconnect();
+        this.node?.port?.close?.();
+        this.node?.disconnect();
       } catch {}
       try {
-        if (this.scriptNode) {
-          this.scriptNode.onaudioprocess = null;
-          this.scriptNode.disconnect();
+        if (this.fallback) {
+          this.fallback.onaudioprocess = null;
+          this.fallback.disconnect();
         }
       } catch {}
-      this.scriptNode = null;
-      try {
-        this.silentGain?.disconnect();
-      } catch {}
-      this.workletNode = null;
-      this.silentGain = null;
-      this.capturing = false;
+      this.node = null;
+      this.fallback = null;
+      this.capture = false;
     },
 
-    releaseMic() {
-      this.stopCapture();
-      if (this.micStream) {
-        this.micStream.getTracks().forEach((t) => t.stop());
-        this.micStream = null;
+    release() {
+      this.stop();
+      if (this.stream) {
+        this.stream.getTracks().forEach((t) => t.stop());
+        this.stream = null;
       }
     },
 
-    /** Reproduce un paquete PCM16 del compañero. */
-    playPcm16(buffer, rate) {
+    /** Reproduce un trozo de audio del compañero. */
+    play(buffer) {
       const ctx = this.ctx;
       if (!ctx) return;
       const pcm = new Int16Array(buffer);
       if (!pcm.length) return;
 
-      // 1) int16 -> float (-1..1)
       const floats = new Float32Array(pcm.length);
       for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 0x8000;
 
-      // 2) remuestreo al ritmo del contexto (48k en la mayoría de móviles)
-      const srcRate = rate || this.rate || 16000;
-      const outRate = ctx.sampleRate;
+      // Del ritmo de envío (16 kHz) al del dispositivo (48 kHz normalmente).
+      const ratio = this.rate / ctx.sampleRate;
       let samples = floats;
-      if (Math.abs(outRate - srcRate) > 1) {
-        const ratio = srcRate / outRate;
-        const outLen = Math.max(1, Math.floor(floats.length / ratio));
-        const res = new Float32Array(outLen);
-        for (let i = 0; i < outLen; i++) {
+      if (Math.abs(1 - ratio) > 0.001) {
+        const length = Math.max(1, Math.floor(floats.length / ratio));
+        samples = new Float32Array(length);
+        for (let i = 0; i < length; i++) {
           const pos = i * ratio;
           const idx = Math.floor(pos);
-          const frac = pos - idx;
           const a = floats[idx] ?? 0;
           const b = floats[idx + 1] ?? a;
-          res[i] = a + (b - a) * frac;
+          samples[i] = a + (b - a) * (pos - idx);
         }
-        samples = res;
       }
 
-      const audioBuffer = ctx.createBuffer(1, samples.length, outRate);
+      const source = ctx.createBufferSource();
+      const audioBuffer = ctx.createBuffer(1, samples.length, ctx.sampleRate);
       audioBuffer.copyToChannel(samples, 0);
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
 
-      const node = ctx.createBufferSource();
-      node.buffer = audioBuffer;
-      if (!this.outputGain) {
-        this.outputGain = ctx.createGain();
-        this.outputGain.connect(ctx.destination);
-        this.analyserOut = ctx.createAnalyser();
-        this.analyserOut.fftSize = 256;
-        this.outputGain.connect(this.analyserOut);
-      }
-      this.outputGain.gain.value = Math.max(0, Number(state.settings.vol) || 100) / 100;
-      node.connect(this.outputGain);
-
+      // Colchón de 120 ms para aguantar los tirones del wifi del local.
       const now = ctx.currentTime;
-      const target = 0.12; // colchón de jitter: 120 ms
-      if (this.nextPlayTime < now + 0.02) this.nextPlayTime = now + target;
-      if (this.nextPlayTime > now + 1.2) this.nextPlayTime = now + target; // nos hemos quedado atrás
+      if (this.next < now + 0.02 || this.next > now + 1) this.next = now + 0.12;
       try {
-        node.start(this.nextPlayTime);
+        source.start(this.next);
       } catch {
-        node.start();
+        source.start();
       }
-      this.nextPlayTime += audioBuffer.duration;
-      this.sources.add(node);
-      node.onended = () => this.sources.delete(node);
+      this.next += audioBuffer.duration;
+      this.playing.add(source);
+      source.onended = () => this.playing.delete(source);
     },
 
-    resetPlayback() {
-      for (const node of this.sources) {
+    reset() {
+      for (const source of this.playing) {
         try {
-          node.stop();
+          source.stop();
         } catch {}
       }
-      this.sources.clear();
-      this.nextPlayTime = 0;
+      this.playing.clear();
+      this.next = 0;
     },
   };
 
-  // ------------------------------------------------------------ medidores VU
+  // ------------------------------------------------------------------ socket
 
-  const meters = { inBuf: null, outBuf: null, levelIn: 0, levelOut: 0 };
+  function connect() {
+    if (state.socket && state.socket.readyState < 2) return;
+    clearTimeout(state.retryTimer);
+    $("roomStatus").textContent = "conectando…";
 
-  function measureOut(arrayBuffer) {
-    if (!arrayBuffer || !arrayBuffer.byteLength) return;
-    const pcm = new Int16Array(arrayBuffer);
-    let peak = 0;
-    for (let i = 0; i < pcm.length; i += 4) {
-      const v = Math.abs(pcm[i]) / 0x8000;
-      if (v > peak) peak = v;
-    }
-    meters.levelOut = Math.max(peak, meters.levelOut * 0.85);
-  }
-
-  function currentLevelIn() {
-    if (!audio.analyserIn) return 0;
-    if (!meters.inBuf) meters.inBuf = new Uint8Array(audio.analyserIn.frequencyBinCount);
-    audio.analyserIn.getByteTimeDomainData(meters.inBuf);
-    let peak = 0;
-    for (let i = 0; i < meters.inBuf.length; i += 2) {
-      const v = Math.abs(meters.inBuf[i] - 128) / 128;
-      if (v > peak) peak = v;
-    }
-    return peak;
-  }
-
-  function currentLevelOut() {
-    meters.levelOut *= 0.82;
-    return meters.levelOut;
-  }
-
-  function rafMeters() {
-    const talking = state.talking;
-    const incoming = Boolean(state.peerTalking);
-    if (talking) {
-      const level = currentLevelIn();
-      $('ptt').style.setProperty('--level', String(level));
-    }
-    if (incoming) {
-      const level = Math.min(1, currentLevelOut() * 2.4);
-      const bar = $('vuBar');
-      if (bar) bar.style.width = `${Math.max(4, Math.round(level * 100))}%`;
-      if (level > 0.06) lastVoiceAt = performance.now();
-    }
-    requestAnimationFrame(rafMeters);
-  }
-
-  let lastVoiceAt = 0;
-
-  // --------------------------------------------------------------- servidor
-
-  function wsUrl() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/ws`;
-  }
-
-  function connect({ rejoin = false } = {}) {
-    if (state.socket && (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-    clearTimeout(state.reconnectTimer);
-    setRoomStatus(rejoin ? 'reconectando…' : 'conectando…');
-
-    let socket;
-    try {
-      socket = new WebSocket(wsUrl());
-    } catch {
-      scheduleReconnect();
-      return;
-    }
-    socket.binaryType = 'arraybuffer';
+    const socket = new WebSocket(
+      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
+    );
+    socket.binaryType = "arraybuffer";
     state.socket = socket;
 
     socket.onopen = () => {
-      state.reconnectAttempt = 0;
+      state.retry = 0;
       socket.send(
         JSON.stringify({
-          type: 'join',
+          type: "join",
           name: state.name,
           pin: state.pin,
           room: state.room,
-        })
+        }),
       );
     };
 
     socket.onmessage = (event) => {
-      if (typeof event.data !== 'string') {
-        audio.playPcm16(event.data, state.peerRate || 16000);
+      if (typeof event.data !== "string") {
+        audio.play(event.data);
         return;
       }
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      handleMessage(msg);
+      handle(JSON.parse(event.data));
     };
 
     socket.onclose = () => {
-      const wasJoined = state.joined;
+      const was = state.joined;
       state.joined = false;
       state.talking = false;
-      state.peerTalking = null;
-      renderTalkingUI();
-      hideIncoming();
-      audio.resetPlayback();
-      audio.releaseMic();
-      setRoomStatus('sin conexión');
-      if (wasJoined) scheduleReconnect();
+      state.peer = null;
+      audio.reset();
+      audio.release();
+      renderPtt();
+      $("incoming").hidden = true;
+      $("roomStatus").textContent = "sin conexión";
+      if (was && state.name) {
+        state.retry += 1;
+        const delay = Math.min(10000, 800 * 2 ** Math.min(state.retry, 4));
+        $("roomStatus").textContent =
+          `reconectando (${Math.round(delay / 1000)} s)…`;
+        state.retryTimer = setTimeout(connect, delay);
+      }
     };
 
     socket.onerror = () => {
-      setRoomStatus('error de conexión');
+      $("roomStatus").textContent = "error de conexión";
     };
   }
 
-  function scheduleReconnect() {
-    if (!state.name) return;
-    state.reconnectAttempt += 1;
-    const delay = Math.min(12000, 700 * 2 ** Math.min(state.reconnectAttempt, 4));
-    setRoomStatus(`reconectando en ${Math.round(delay / 1000)} s…`);
-    clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = setTimeout(() => connect({ rejoin: true }), delay);
-  }
-
-  function send(payload) {
-    const socket = state.socket;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(payload));
+  const send = (payload) => {
+    if (state.socket?.readyState === WebSocket.OPEN) {
+      state.socket.send(JSON.stringify(payload));
       return true;
     }
     return false;
-  }
+  };
 
-  function handleMessage(msg) {
+  function handle(msg) {
     switch (msg.type) {
-      case 'welcome': {
+      case "welcome":
         state.you = msg.you;
         state.joined = true;
         state.room = msg.you.room;
         state.rooms = msg.rooms || [];
-        state.maxTalkSeconds = msg.maxTalkSeconds || 45;
-        state.maxAlertSeconds = msg.maxAlertSeconds || 25;
-        state.alertsEnabled = msg.alertsEnabled !== false;
-        $('alertBtn').hidden = !state.alertsEnabled;
-        LS.set('room', state.room);
-        showApp();
-        renderRooms();
-        resizeRoster(msg.users || []);
-        renderHistory(msg.history || []);
-        setRoomStatus('en línea');
+        state.maxSeconds = msg.maxTalkSeconds || 45;
+        store.set("room", state.room);
+        $("login").hidden = true;
+        $("app").hidden = false;
+        $("roomStatus").textContent = "en línea";
+        drawRooms();
+        drawHeader();
+        drawRoster(msg.users || []);
+        drawLog(msg.history || []);
+        renderPtt();
         break;
-      }
-      case 'switched': {
+
+      case "switched":
         state.room = msg.room;
-        if (state.target?.kind === 'dm') setTarget({ kind: 'room' });
-        LS.set('room', state.room);
-        audio.resetPlayback();
-        hideIncoming();
-        state.peerTalking = null;
-        resizeRoster(msg.users || []);
-        renderHistory(msg.history || []);
-        renderRooms();
-        closeDrawer();
-        updateRoomHeader();
-        toast('Canal cambiado');
+        store.set("room", state.room);
+        state.peer = null;
+        $("incoming").hidden = true;
+        audio.reset();
+        drawHeader();
+        drawRoster(msg.users || []);
+        drawLog(msg.history || []);
+        drawRooms();
+        $("drawer").hidden = true;
         break;
-      }
-      case 'rooms':
+
+      case "rooms":
         state.rooms = msg.rooms || state.rooms;
-        renderRooms();
-        updateRoomHeader();
+        drawRooms();
+        drawHeader();
         break;
-      case 'roster':
-        if (msg.room === state.room) resizeRoster(msg.users || []);
+
+      case "roster":
+        if (msg.room === state.room) drawRoster(msg.users || []);
         break;
-      case 'presence':
-        state.online = msg.online || 0;
-        $('onlineBadge').textContent = `${state.online} en línea`;
+
+      case "presence":
+        $("onlineBadge").textContent = String(msg.online || 0);
         break;
-      case 'talkAccept':
-        // Si ya hemos soltado el botón mientras llegaba el turno, lo cedemos.
-        if (!state.wantTalking) {
-          send({ type: 'talk', on: false });
-          setTimeout(() => {
-            if (!state.talking && !state.peerTalking) audio.releaseMic();
-          }, 300);
+
+      case "talkAccept":
+        if (!state.wantsTalk) {
+          send({ type: "talk", on: false });
           break;
         }
         state.talking = true;
-        state.talkStartedAt = Date.now();
-        state.maxTalkSeconds = msg.maxSeconds || state.maxTalkSeconds;
-        state.talkingScope = msg.scope || 'room';
-        state.talkingTo = msg.to ? { id: msg.to, name: msg.toName } : null;
-        beep(msg.scope === 'alert' ? 1050 : 920, 0.08);
-        renderTalkingUI();
-        startPttTimer();
-        requestWakeLock();
+        state.startedAt = Date.now();
+        state.maxSeconds = msg.maxSeconds || state.maxSeconds;
+        renderPtt();
         break;
-      case 'talkDeny':
-        state.wantTalking = false;
+
+      case "talkDeny":
+        state.wantsTalk = false;
         state.talking = false;
-        beep(300, 0.14, 0.05);
-        renderTalkingUI();
+        audio.release();
+        renderPtt();
         flashBusy();
-        const who = msg.by || 'Alguien';
-        toast(
-          msg.scope === 'dm'
-            ? `${who} está ocupado en otra conversación`
-            : msg.scope === 'alert'
-              ? 'Hay un aviso prioritario en curso'
-              : `${who} está hablando`
-        );
-        setTimeout(() => {
-          if (!state.talking) audio.releaseMic();
-        }, 300);
+        toast(`${msg.by || "Alguien"} está hablando`);
         break;
-      case 'talkStart': {
-        state.peerRate = msg.rate || 16000;
-        if (msg.alert) {
-          state.peerTalking = msg.from;
-          state.alertTalking = true;
-          showIncoming(msg.from, 'aviso prioritario', true);
-          if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
-          beep(1050, 0.12, 0.09);
-          setTimeout(() => beep(1200, 0.12, 0.09), 160);
-        } else if (msg.dm) {
-          state.dmPeerTalking = msg.from;
-          state.peerTalking = msg.from;
-          showIncoming(msg.from, 'te habla a ti (privado)', false);
-          if (state.settings.vibe && navigator.vibrate) navigator.vibrate(40);
-          beep(820, 0.06, 0.04);
-        } else {
-          state.peerTalking = msg.from;
-          showIncoming(msg.from);
-          if (state.settings.vibe && navigator.vibrate) navigator.vibrate(40);
-          beep(760, 0.06, 0.035);
-        }
+
+      case "talkStart":
+        state.peer = msg.from;
+        $("incomingName").textContent = msg.from;
+        $("incoming").hidden = false;
+        if (navigator.vibrate) navigator.vibrate(30);
+        renderPtt();
         break;
-      }
-      case 'talkEnd':
-        if (msg.scope === 'alert' && state.target?.kind === 'alert') setTarget({ kind: 'room' });
-        if (!msg.scope || msg.scope === 'alert') state.alertTalking = false;
-        if (!msg.scope || msg.scope === 'dm') state.dmPeerTalking = null;
-        state.peerTalking = null;
-        hideIncoming();
+
+      case "talkEnd":
+        state.peer = null;
+        $("incoming").hidden = true;
+        renderPtt();
         break;
-      case 'dmOffer':
-        if (state.settings.vibe && navigator.vibrate) navigator.vibrate(25);
-        toast(`${msg.from} quiere hablar contigo`, 2200);
+
+      case "chat":
+        addLog(msg.from, msg.text, msg.ts);
+        if (msg.from !== state.name && document.hidden && navigator.vibrate)
+          navigator.vibrate(20);
         break;
-      case 'alert':
-        showAlert(msg.from, msg.text);
-        addLog({ what: `🚨 Aviso de ${msg.from}: ${msg.text}`, ts: msg.ts, kind: 'alert' });
-        if (navigator.vibrate) navigator.vibrate([80, 60, 80]);
-        beep(1050, 0.12, 0.08);
+
+      case "system":
+        addLog(null, msg.text, msg.ts);
         break;
-      case 'chat':
-        addLog({
-          who: msg.dm ? `${msg.from} · privado` : msg.from,
-          what: msg.text,
-          ts: msg.ts,
-          kind: msg.dm ? 'dm' : 'chat',
-        });
-        if (msg.from !== state.name) {
-          if (state.settings.vibe && navigator.vibrate && document.hidden) navigator.vibrate(30);
-          if (document.hidden) beep(680, 0.07, 0.03);
-        }
-        break;
-      case 'system':
-        addLog({ what: msg.text, ts: msg.ts, kind: 'sys' });
-        break;
-      case 'error':
+
+      case "error":
         if (!state.joined) {
-          showLoginError(msg.message);
-          setLoginBusy(false);
+          $("loginError").textContent = msg.message;
+          $("loginError").hidden = false;
+          $("enterBtn").disabled = false;
+          $("enterBtn").textContent = "Entrar";
         } else {
           toast(msg.message);
         }
         break;
+
       default:
         break;
     }
   }
 
-  // ------------------------------------------------------------ PTT (hablar)
+  // -------------------------------------------------------------------- PTT
 
-  let pttTimerHandle = null;
-  let pttInterval = null;
+  let timer = null;
 
-  function startPttTimer() {
-    clearInterval(pttInterval);
-    const el = $('pttTimer');
-    pttInterval = setInterval(() => {
-      const elapsed = (Date.now() - (state.talkStartedAt || Date.now())) / 1000;
-      const remaining = Math.max(0, (state.maxTalkSeconds || 45) - elapsed);
-      el.textContent = remaining < 10 ? `${remaining.toFixed(1)} s` : '';
-      if (remaining <= 0) clearInterval(pttInterval);
-    }, 100);
-  }
-
-  function talkScope() {
-    const target = state.target || { kind: 'room' };
-    if (target.kind === 'alert') return { kind: 'alert' };
-    if (target.kind === 'dm' && target.id) return { kind: 'dm', to: target.id };
-    return { kind: 'room' };
-  }
-
-  async function startTalking() {
+  async function startTalk() {
     if (!state.joined || state.talking) return;
-    const scope = talkScope();
-    if (scope.kind === 'room' && state.peerTalking) {
-      // El canal está ocupado: avisamos sin encender el micro.
-      beep(300, 0.12, 0.05);
+    if (state.peer) {
       flashBusy();
-      toast(`${state.peerTalking} está hablando`);
+      toast(`${state.peer} está hablando`);
       return;
     }
-    if (scope.kind === 'dm' && state.dmPeerTalking === state.target.name) {
-      // Te está hablando a ti: responde cuando termine.
-      toast(`${state.target.name} te está hablando`);
-      return;
-    }
-    state.wantTalking = true;
+    state.wantsTalk = true;
     try {
-      await audio.startCapture();
-    } catch (err) {
-      state.wantTalking = false;
-      const secure = window.isSecureContext || location.hostname === 'localhost';
-      const message = secure
-        ? 'Revisa los permisos del micrófono en los ajustes del navegador y vuelve a intentarlo.'
-        : 'El navegador solo deja usar el micrófono en HTTPS o en localhost. Abre la app con la dirección segura que te ha dado el servidor.';
-      showPttError(err?.name === 'NotAllowedError' ? 'Micrófono bloqueado' : 'No puedo usar el micrófono', `${message}\n\nDetalle: ${err?.message || err}`);
+      await audio.context();
+      await audio.start();
+    } catch (error) {
+      state.wantsTalk = false;
+      const secure =
+        window.isSecureContext || location.hostname === "localhost";
+      toast(
+        secure
+          ? "No puedo usar el micrófono: revisa los permisos del navegador"
+          : "El micrófono necesita HTTPS: abre la dirección https:// de la app",
+      );
       return;
     }
-    if (!state.wantTalking) {
-      audio.releaseMic();
+    if (!state.wantsTalk) {
+      audio.release();
       return;
     }
-    send({ type: 'talk', on: true, scope, rate: Number(state.settings.rate) || 16000 });
+    send({ type: "talk", on: true });
   }
 
-  function stopTalking() {
-    state.wantTalking = false;
-    if (state.talking) {
-      send({ type: 'talk', on: false });
-      beep(620, 0.08, 0.045);
-    }
+  function stopTalk() {
+    state.wantsTalk = false;
+    if (state.talking) send({ type: "talk", on: false });
     state.talking = false;
-    state.talkingScope = null;
-    state.talkingTo = null;
-    if (state.target?.kind === 'alert') {
-      // El modo aviso es de un solo uso: vuelve a hablar al canal.
-      setTarget({ kind: 'room' });
-      toast('Aviso enviado · vuelves al canal', 2200);
-    }
-    clearInterval(pttInterval);
-    $('pttTimer').textContent = '';
-    renderTalkingUI();
-    releaseWakeLock();
-    // Liberamos el micro tras un pequeño margen para no cortar la última sílaba.
+    clearInterval(timer);
+    $("pttTimer").textContent = "";
+    renderPtt();
     setTimeout(() => {
-      if (!state.talking && !state.peerTalking) audio.releaseMic();
+      if (!state.talking) audio.release();
     }, 400);
   }
 
-  function renderTalkingUI() {
-    const ptt = $('ptt');
-    ptt.classList.toggle('is-talking', state.talking);
-    ptt.disabled = !state.joined;
-    const text = ptt.querySelector('.ptt-text');
-    const target = state.target || { kind: 'room' };
-    const toLabel =
-      target.kind === 'dm' && target.name
-        ? `a ${escapeHtml(target.name)}`
-        : target.kind === 'alert'
-          ? 'aviso a todos'
-          : 'para hablar';
-    if (state.talking) {
-      const detail =
-        state.talkingScope === 'alert'
-          ? 'aviso en todo el restaurante'
-          : state.talkingTo?.name
-            ? `solo a ${escapeHtml(state.talkingTo.name)}`
-            : 'suelta para terminar';
-      text.innerHTML = (state.talkingScope === 'alert' ? 'AVISO 🚨<br />' : 'HABLANDO<br />') + `<small>${detail}</small>`;
-    } else if (state.peerTalking && target.kind === 'room' && !state.dmPeerTalking) {
-      text.innerHTML = 'ESCUCHANDO<br /><small>canal ocupado</small>';
-    } else {
-      text.innerHTML = `MANTÉN<br /><small style="letter-spacing:.04em">${toLabel}</small>`;
-    }
-    ptt.classList.toggle('is-alert', state.talkingScope === 'alert' && state.talking);
-    if (!state.talking) $('pttTimer').textContent = '';
+  function renderPtt() {
+    const ptt = $("ptt");
+    ptt.classList.toggle("talking", state.talking);
+    const label = $("pttText");
+    label.innerHTML = state.talking
+      ? "HABLANDO<br /><small>suelta para terminar</small>"
+      : state.peer
+        ? "ESCUCHANDO<br /><small>canal ocupado</small>"
+        : "MANTÉN<br />PARA HABLAR";
+    clearInterval(timer);
+    if (!state.talking) return;
+    timer = setInterval(() => {
+      const left =
+        (state.maxSeconds * 1000 - (Date.now() - state.startedAt)) / 1000;
+      $("pttTimer").textContent =
+        left <= 10 ? `${Math.max(0, left).toFixed(1)} s` : "";
+    }, 100);
   }
 
   function flashBusy() {
-    const ptt = $('ptt');
-    ptt.classList.add('is-busy');
-    setTimeout(() => ptt.classList.remove('is-busy'), 320);
+    $("ptt").classList.add("busy");
+    setTimeout(() => $("ptt").classList.remove("busy"), 320);
   }
 
-  function showIncoming(name, label, isAlert) {
-    $('incomingName').textContent = name;
-    $('incomingLabel').textContent = label || 'está hablando';
-    $('incoming').classList.toggle('is-alert', Boolean(isAlert));
-    $('incoming').hidden = false;
-    $('vuBar').style.width = '4%';
-    renderTalkingUI();
-  }
+  // ----------------------------------------------------------------- vistas
 
-  let alertTimer = null;
-  function showAlert(from, text) {
-    $('alertTitle').textContent = `Aviso de ${from}`;
-    $('alertSub').textContent = 'prioridad: se oye en todos los canales';
-    $('alertText').textContent = text;
-    $('alertBanner').hidden = false;
-    clearTimeout(alertTimer);
-    alertTimer = setTimeout(() => {
-      $('alertBanner').hidden = true;
-    }, 15000);
-  }
-
-  function hideIncoming() {
-    $('incoming').hidden = true;
-    $('incoming').classList.remove('is-alert');
-    $('incomingLabel').textContent = 'está hablando';
-    $('vuBar').style.width = '4%';
-    renderTalkingUI();
-  }
-
-  // Pantalla siempre encendida mientras hablamos
-  let wakeLock = null;
-  async function requestWakeLock() {
-    try {
-      if ('wakeLock' in navigator && !wakeLock) {
-        wakeLock = await navigator.wakeLock.request('screen');
-        wakeLock.addEventListener('release', () => {
-          wakeLock = null;
-        });
-      }
-    } catch {}
-  }
-  function releaseWakeLock() {
-    try {
-      wakeLock?.release();
-    } catch {}
-    wakeLock = null;
-  }
-
-  // ------------------------------------------------------------------ vistas
-
-  function showLoginError(message) {
-    const el = $('loginError');
-    el.textContent = message;
-    el.hidden = false;
-  }
-
-  function setLoginBusy(busy) {
-    const btn = $('enterBtn');
-    btn.disabled = busy;
-    btn.textContent = busy ? 'Conectando…' : 'Entrar';
-  }
-
-  function showApp() {
-    $('login').hidden = true;
-    $('app').hidden = false;
-    $('nameInput').value = state.name;
-    setTarget({ kind: 'room' });
-    updateRoomHeader();
-    renderTalkingUI();
-    requestAnimationFrame(rafMeters);
-  }
-
-  function updateRoomHeader() {
+  function drawHeader() {
     const room = state.rooms.find((r) => r.id === state.room);
     if (!room) return;
-    $('roomEmoji').textContent = room.emoji || '📢';
-    $('roomName').textContent = room.name;
+    $("roomEmoji").textContent = room.emoji || "📻";
+    $("roomName").textContent = room.name;
     document.title = `${room.name} · Walkie Lagos`;
   }
 
-  function setRoomStatus(text) {
-    $('roomStatus').textContent = text;
-  }
-
-  function renderRooms() {
-    const loginList = $('loginRooms');
-    if (loginList && loginList.dataset.built !== '1') {
-      loginList.dataset.built = '1';
-      loginList.innerHTML = '';
-      state.rooms.forEach((room) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'room-choice';
-        btn.setAttribute('role', 'radio');
-        btn.dataset.room = room.id;
-        btn.innerHTML = `<span>${room.emoji}</span><span>${escapeHtml(room.name)}</span>`;
-        btn.addEventListener('click', () => selectLoginRoom(room.id));
-        loginList.appendChild(btn);
-      });
-      selectLoginRoom(state.room);
+  function drawRooms() {
+    const pick = $("loginRooms");
+    if (
+      !pick.children.length ||
+      pick.dataset.count !== String(state.rooms.length)
+    ) {
+      pick.innerHTML = "";
+      pick.dataset.count = String(state.rooms.length);
+      for (const room of state.rooms) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("role", "radio");
+        button.dataset.room = room.id;
+        button.textContent = `${room.emoji} ${room.name}`;
+        button.addEventListener("click", () => pickRoom(room.id));
+        pick.appendChild(button);
+      }
+      pickRoom(state.room || state.rooms[0]?.id);
     }
 
-    const list = $('roomList');
-    list.innerHTML = '';
-    state.rooms.forEach((room) => {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'room-item';
-      item.setAttribute('aria-current', String(room.id === state.room));
-      const live = room.talking ? `<small>🔊 ${escapeHtml(room.talking)} está hablando</small>` : `<small>${room.count ? `${room.count} en el canal` : 'nadie dentro'}</small>`;
-      const badge = room.talking
-        ? '<span class="badge live">en directo</span>'
-        : `<span class="badge">${room.count}</span>`;
-      item.innerHTML = `<span class="emoji">${room.emoji}</span><span class="info"><strong>${escapeHtml(room.name)}</strong>${live}</span>${badge}`;
-      item.addEventListener('click', () => {
-        if (room.id === state.room) return closeDrawer();
-        if (state.talking) stopTalking();
-        audio.resetPlayback();
-        send({ type: 'switch', room: room.id });
+    const list = $("roomList");
+    list.innerHTML = "";
+    for (const room of state.rooms) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("aria-current", String(room.id === state.room));
+      const detail = room.talking
+        ? `${room.talking} hablando`
+        : `${room.count} dentro`;
+      button.innerHTML = `<span>${room.emoji}</span><span>${escapeHtml(room.name)}</span><small>${escapeHtml(detail)}</small>`;
+      button.addEventListener("click", () => {
+        if (room.id === state.room) {
+          $("drawer").hidden = true;
+          return;
+        }
+        stopTalk();
+        audio.reset();
+        send({ type: "switch", room: room.id });
       });
-      list.appendChild(item);
-    });
-  }
-
-  function setTarget(target) {
-    state.target = target;
-    const isDm = target.kind === 'dm';
-    const isAlert = target.kind === 'alert';
-    $('targetAll').setAttribute('aria-pressed', String(!isDm && !isAlert));
-    $('targetDm').setAttribute('aria-pressed', String(isDm));
-    $('alertBtn').setAttribute('aria-pressed', String(isAlert));
-    const nameEl = $('targetName');
-    if (isDm && target.name) {
-      nameEl.textContent = target.name;
-      nameEl.hidden = false;
-    } else {
-      nameEl.hidden = true;
+      list.appendChild(button);
     }
-    const room = state.rooms.find((r) => r.id === state.room);
-    $('targetRoomEmoji').textContent = room?.emoji || '📢';
-    renderTalkingUI();
   }
 
-  function selectLoginRoom(id) {
+  function pickRoom(id) {
     state.room = id;
-    [...$('loginRooms').children].forEach((el) => {
-      el.setAttribute('aria-checked', String(el.dataset.room === id));
-    });
-  }
-
-  function resizeRoster(users) {
-    const roster = $('roster');
-    roster.innerHTML = '';
-    state.peers = users.filter((u) => !state.you || u.id !== state.you.id);
-    users.forEach((user) => {
-      const isMe = state.you && user.id === state.you.id;
-      const isTarget = state.target?.kind === 'dm' && state.target.id === user.id;
-      const el = document.createElement(isMe ? 'div' : 'button');
-      if (!isMe) {
-        el.type = 'button';
-        el.title = `Hablar solo con ${user.name}`;
-      }
-      el.className = `person${isMe ? ' me' : ' selectable'}${isTarget ? ' target' : ''}${user.talking || state.peerTalking === user.name ? ' speaking' : ''}`;
-      el.innerHTML = `<span class="avatar" style="background:${colorFor(user.name)}">${escapeHtml(initials(user.name))}</span><span class="name">${escapeHtml(user.name)}${isMe ? ' (tú)' : ''}</span>`;
-      if (user.talking) {
-        el.innerHTML += `<span class="live-dot"></span>`;
-      }
-      if (!isMe) {
-        el.addEventListener('click', () => {
-          if (state.talking) {
-            toast('Suelta el botón antes de cambiar de destino');
-            return;
-          }
-          const alreadyMine = state.target?.kind === 'dm' && state.target.id === user.id;
-          setTarget(alreadyMine ? { kind: 'room' } : { kind: 'dm', id: user.id, name: user.name });
-          toast(alreadyMine ? 'Vuelves a hablar a todo el canal' : `Hablarás solo con ${user.name}`);
-        });
-      }
-      roster.appendChild(el);
-    });
-    if (!users.length) {
-      roster.innerHTML = '<div class="person"><span class="name">Solo tú en el canal</span></div>';
+    for (const button of $("loginRooms").children) {
+      button.setAttribute("aria-checked", String(button.dataset.room === id));
     }
   }
 
-  // -------------------------------------------------------------------- log
+  function drawRoster(users) {
+    const roster = $("roster");
+    roster.innerHTML = "";
+    if (!users.length) {
+      roster.innerHTML = "<span>Estás solo en el canal</span>";
+      return;
+    }
+    for (const user of users) {
+      const chip = document.createElement("span");
+      const me = state.you && user.id === state.you.id;
+      chip.className = user.talking ? "speaking" : "";
+      chip.textContent = me ? `${user.name} (tú)` : user.name;
+      roster.appendChild(chip);
+    }
+  }
 
-  function addLog({ who, what, ts, kind }) {
-    const log = $('log');
-    const row = document.createElement('div');
-    row.className = `log-row ${kind}`;
-    const time = new Date(ts || Date.now()).toLocaleTimeString('es-ES', {
-      hour: '2-digit',
-      minute: '2-digit',
+  function drawLog(entries) {
+    $("log").innerHTML = "";
+    for (const entry of entries) addLog(entry.from, entry.text, entry.ts);
+  }
+
+  function addLog(who, text, ts) {
+    const log = $("log");
+    const row = document.createElement("div");
+    const time = new Date(ts || Date.now()).toLocaleTimeString("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit",
     });
-    if (kind === 'sys' || kind === 'talk') {
-      row.innerHTML = `<time>${time}</time><span class="what">${escapeHtml(what)}</span>`;
+    if (who) {
+      row.innerHTML = `<i>${time}</i> <b>${escapeHtml(who)}</b>: ${escapeHtml(text)}`;
     } else {
-      row.innerHTML = `<time>${time}</time><span class="who" style="color:${colorFor(who || '')}">${escapeHtml(who || '')}</span><span class="what">${escapeHtml(what)}</span>`;
+      row.innerHTML = `<i>${escapeHtml(text)}</i>`;
     }
     log.appendChild(row);
-    while (log.children.length > 80) log.removeChild(log.firstChild);
+    while (log.children.length > 60) log.removeChild(log.firstChild);
     log.scrollTop = log.scrollHeight;
   }
 
-  function renderHistory(entries) {
-    $('log').innerHTML = '';
-    entries.forEach((entry) => addLog({ who: entry.from, what: entry.text, ts: entry.ts, kind: 'chat' }));
-  }
+  const escapeHtml = (value) =>
+    String(value ?? "").replace(
+      /[&<>"']/g,
+      (char) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[char],
+    );
 
-  function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
-    })[char]);
-  }
+  // ---------------------------------------------------------------- eventos
 
-  // ----------------------------------------------------------------- drawes
+  $("loginForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = $("nameInput").value.trim();
+    if (!name) return;
+    state.name = name;
+    state.pin = $("pinInput").value;
+    if (!state.room)
+      state.room =
+        $("loginRooms").querySelector('[aria-checked="true"]')?.dataset.room ||
+        "general";
+    store.set("name", name);
+    store.set("pin", state.pin);
+    store.set("room", state.room);
+    $("loginError").hidden = true;
+    $("enterBtn").disabled = true;
+    $("enterBtn").textContent = "Conectando…";
+    connect();
+  });
 
-  function openDrawer(id) {
-    $(id).hidden = false;
-  }
-  function closeDrawer() {
-    $('drawer').hidden = true;
-    $('settings').hidden = true;
-  }
+  const ptt = $("ptt");
+  ptt.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    audio.context().catch(() => {});
+    startTalk();
+  });
+  ptt.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    stopTalk();
+  });
+  ptt.addEventListener("pointercancel", stopTalk);
+  ptt.addEventListener("contextmenu", (event) => event.preventDefault());
 
-  function showPttError(title, text) {
-    $('pttErrorTitle').textContent = title;
-    $('pttErrorText').textContent = text;
-    $('pttError').hidden = false;
-  }
+  // En el ordenador, la barra espaciadora hace de botón.
+  document.addEventListener("keydown", (event) => {
+    if (event.code !== "Space" || event.repeat || !state.joined) return;
+    if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+    event.preventDefault();
+    startTalk();
+  });
+  document.addEventListener("keyup", (event) => {
+    if (event.code === "Space" && state.joined) stopTalk();
+  });
 
-  // ------------------------------------------------------------------ ajustes
-
-  function applySettingsToUI() {
-    $('setNs').checked = Boolean(state.settings.ns);
-    $('setEc').checked = Boolean(state.settings.ec);
-    $('setBeeps').checked = Boolean(state.settings.beeps);
-    $('setVibe').checked = Boolean(state.settings.vibe);
-    $('setVol').value = state.settings.vol;
-    $('volLabel').textContent = `${state.settings.vol}%`;
-    $('setRate').value = String(state.settings.rate);
-    $('soundBtn').setAttribute('aria-pressed', String(Boolean(state.settings.beeps)));
-  }
-
-  function saveSettings() {
-    LS.set('settings', state.settings);
-    applySettingsToUI();
-  }
-
-  async function fillMicrophones() {
-    const selects = $('setMic');
-    const mics = await audio.listMics();
-    if (!mics.length) return;
-    selects.innerHTML = '<option value="">Predeterminado</option>';
-    mics.forEach((mic, index) => {
-      const opt = document.createElement('option');
-      opt.value = mic.deviceId;
-      opt.textContent = mic.label || `Micrófono ${index + 1}`;
-      selects.appendChild(opt);
+  $("channelsBtn").addEventListener("click", () => {
+    drawRooms();
+    $("drawer").hidden = false;
+  });
+  document.querySelectorAll("[data-close]").forEach((el) => {
+    el.addEventListener("click", () => {
+      $("drawer").hidden = true;
     });
-    selects.value = state.settings.mic || '';
-  }
+  });
 
-  function updateDiag() {
-    const meter = audio.ctx ? audio.ctx.sampleRate : '—';
-    const rate = Number(state.settings.rate) || 16000;
-    const secure = window.isSecureContext ? 'sí' : 'NO (¡hace falta HTTPS!)';
-    $('diagText').textContent = `Contexto de audio: ${meter} Hz · Envío: ${rate / 1000} kHz · Conexión segura: ${secure} · Servidor: ${location.host}`;
-  }
+  $("chatForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = $("chatInput");
+    const text = input.value.trim();
+    if (!text) return;
+    if (!send({ type: "chat", text })) return toast("Sin conexión");
+    input.value = "";
+  });
 
-  // ------------------------------------------------------------------ eventos
-
-  function bindEvents() {
-    // --- login
-    const initialRoom = state.room || '';
-    $('loginForm').addEventListener('submit', (event) => {
-      event.preventDefault();
-      const name = $('nameInput').value.trim();
-      if (!name) {
-        showLoginError('Pon tu nombre para que el equipo sepa quién habla.');
-        return;
-      }
-      state.name = name;
-      state.pin = $('pinInput').value;
-      if (!state.room) state.room = document.querySelector('.room-choice')?.dataset.room || 'general';
-      LS.set('name', name);
-      LS.set('pin', state.pin);
-      LS.set('room', state.room);
-      setLoginBusy(true);
-      $('loginError').hidden = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && state.talking) stopTalk();
+    if (
+      !document.hidden &&
+      state.joined &&
+      state.socket?.readyState !== WebSocket.OPEN
+    )
       connect();
-      setTimeout(() => setLoginBusy(false), 6000);
-    });
+  });
+  window.addEventListener("online", () => state.joined && connect());
+  window.addEventListener("pagehide", () => audio.release());
+  setInterval(() => state.joined && send({ type: "ping" }), 25000);
 
-    $('nameInput').addEventListener('input', () => {
-      $('loginError').hidden = true;
-    });
+  // ------------------------------------------------------------------- init
 
-    // --- PTT
-    const ptt = $('ptt');
-    const pointerDown = (event) => {
-      event.preventDefault();
-      audio.ensureContext().catch(() => {});
-      if (state.locked) {
-        if (state.talking) stopTalking();
-        else startTalking();
-        return;
-      }
-      if (event.pointerId !== undefined) {
-        try {
-          ptt.setPointerCapture(event.pointerId);
-        } catch {}
-      }
-      startTalking();
-    };
-    const pointerUp = (event) => {
-      if (event && event.cancelable) event.preventDefault();
-      if (!state.locked) stopTalking();
-    };
-
-    ptt.addEventListener('pointerdown', pointerDown);
-    ptt.addEventListener('pointerup', pointerUp);
-    ptt.addEventListener('pointercancel', pointerUp);
-    ptt.addEventListener('pointerleave', (event) => {
-      if (!state.locked && event.buttons) pointerUp(event);
-    });
-    ptt.addEventListener('contextmenu', (event) => event.preventDefault());
-
-    // Teclado: barra espaciadora para hablar en el ordenador
-    document.addEventListener('keydown', (event) => {
-      if (!state.joined || event.repeat) return;
-      const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (event.code === 'Space') {
-        event.preventDefault();
-        if (state.locked) {
-          if (state.talking) stopTalking();
-          else startTalking();
-        } else startTalking();
-      }
-    });
-    document.addEventListener('keyup', (event) => {
-      if (!state.joined) return;
-      const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (event.code === 'Space' && !state.locked) stopTalking();
-    });
-
-    $('lockBtn').addEventListener('click', () => {
-      state.locked = !state.locked;
-      $('lockBtn').setAttribute('aria-pressed', String(state.locked));
-      $('lockLabel').textContent = state.locked ? 'Modo pulsar (bloqueado)' : 'Mantener pulsado';
-      renderTalkingUI();
-      toast(state.locked ? 'Micro bloqueado: pulsa para hablar/soltar' : 'Vuelve a mantener pulsado');
-    });
-
-    // --- destino del PTT
-    $('targetAll').addEventListener('click', () => {
-      if (state.talking) return toast('Suelta el botón antes de cambiar de destino');
-      setTarget({ kind: 'room' });
-      toast('Hablarás a todo el canal');
-    });
-
-    $('alertBtn').addEventListener('click', () => {
-      if (!state.alertsEnabled) return toast('Los avisos prioritarios están desactivados');
-      if (state.talking) return toast('Suelta el botón antes de cambiar de destino');
-      const isAlert = state.target?.kind === 'alert';
-      setTarget(isAlert ? { kind: 'room' } : { kind: 'alert' });
-      if (!isAlert) toast('Modo aviso: mantén el botón para avisar a TODO el restaurante', 3400);
-    });
-
-    $('alertForm')?.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const input = $('alertInput');
-      const text = input.value.trim();
-      if (!text) return;
-      send({ type: 'alert', text });
-      input.value = '';
-    });
-
-    $('alertDismiss').addEventListener('click', () => {
-      $('alertBanner').hidden = true;
-      clearTimeout(alertTimer);
-    });
-
-    $('dmWith')?.addEventListener('change', (event) => {
-      const id = event.target.value;
-      const peer = (state.peers || []).find((p) => p.id === id);
-      setTarget(peer ? { kind: 'dm', id: peer.id, name: peer.name } : { kind: 'room' });
-    });
-
-    // --- canales
-    $('channelsBtn').addEventListener('click', () => {
-      renderRooms();
-      openDrawer('drawer');
-    });
-
-    // --- ajustes
-    $('settingsBtn').addEventListener('click', () => {
-      applySettingsToUI();
-      updateDiag();
-      fillMicrophones();
-      openDrawer('settings');
-    });
-
-    document.querySelectorAll('[data-close]').forEach((el) => {
-      el.addEventListener('click', () => {
-        closeDrawer();
-        $('pttError').hidden = true;
-      });
-    });
-
-    $('setNs').addEventListener('change', (event) => {
-      state.settings.ns = event.target.checked;
-      saveSettings();
-      audio.releaseMic();
-    });
-    $('setEc').addEventListener('change', (event) => {
-      state.settings.ec = event.target.checked;
-      saveSettings();
-      audio.releaseMic();
-    });
-    $('setBeeps').addEventListener('change', (event) => {
-      state.settings.beeps = event.target.checked;
-      saveSettings();
-    });
-    $('setVibe').addEventListener('change', (event) => {
-      state.settings.vibe = event.target.checked;
-      if (state.settings.vibe && navigator.vibrate) navigator.vibrate(30);
-      saveSettings();
-    });
-    $('setVol').addEventListener('input', (event) => {
-      state.settings.vol = Number(event.target.value);
-      $('volLabel').textContent = `${state.settings.vol}%`;
-      saveSettings();
-    });
-    $('setRate').addEventListener('change', (event) => {
-      state.settings.rate = Number(event.target.value);
-      saveSettings();
-      if (state.talking) audio.releaseMic();
-      toast('Calidad ajustada');
-    });
-    $('setMic').addEventListener('change', (event) => {
-      state.settings.mic = event.target.value;
-      saveSettings();
-      audio.releaseMic();
-    });
-
-    $('soundBtn').addEventListener('click', () => {
-      state.settings.beeps = !state.settings.beeps;
-      saveSettings();
-      toast(state.settings.beeps ? 'Avisos activados' : 'Avisos silenciados');
-    });
-
-    $('logoutBtn').addEventListener('click', () => {
-      closeDrawer();
-      stopTalking();
-      audio.releaseMic();
-      audio.resetPlayback();
-      try {
-        state.socket?.close();
-      } catch {}
-      state.joined = false;
-      state.name = '';
-      $('app').hidden = true;
-      $('login').hidden = false;
-      setLoginBusy(false);
-      $('pinInput').value = state.pin;
-    });
-
-    // --- chat
-    $('chatForm').addEventListener('submit', (event) => {
-      event.preventDefault();
-      const input = $('chatInput');
-      const text = input.value.trim();
-      if (!text) return;
-      if (!send({ type: 'chat', text })) {
-        toast('Sin conexión: el mensaje no se ha enviado');
-        return;
-      }
-      input.value = '';
-    });
-
-    // --- ciclo de vida
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden && state.talking && !state.locked) stopTalking();
-      if (!document.hidden && state.joined && state.socket?.readyState !== WebSocket.OPEN) {
-        connect({ rejoin: true });
-      }
-    });
-
-    window.addEventListener('online', () => {
-      if (state.joined) connect({ rejoin: true });
-    });
-
-    window.addEventListener('pagehide', () => {
-      try {
-        state.socket?.close();
-      } catch {}
-      audio.releaseMic();
-    });
-
-    // Mantener despierto el socket
-    setInterval(() => {
-      if (state.joined && document.visibilityState === 'visible') send({ type: 'ping' });
-    }, 25000);
-  }
-
-  // -------------------------------------------------------------------- init
-
-  async function init() {
-    applySettingsToUI();
-    bindEvents();
-
-    if (state.name) $('nameInput').value = state.name;
-    if (state.pin) $('pinInput').value = state.pin;
+  (async () => {
+    if (state.name) $("nameInput").value = state.name;
+    if (state.pin) $("pinInput").value = state.pin;
 
     try {
-      const response = await fetch('/api/config');
-      const cfg = await response.json();
+      const cfg = await (await fetch("/api/config")).json();
       state.rooms = cfg.rooms || [];
-      $('appName').textContent = cfg.appName || 'Walkie Lagos';
-      $('tagline').textContent = cfg.tagline || '';
-      $('pinField').hidden = !cfg.requiresPin;
-      const roomIds = state.rooms.map((r) => r.id);
-      if (!state.rooms.some((r) => r.id === state.room)) {
-        state.room = roomIds.includes('general') ? 'general' : roomIds[0] || 'general';
-      }
-      selectLoginRoom(state.room);
-      updateRoomHeader();
-      $('onlineBadge').textContent = `${cfg.online || 0} en línea`;
+      $("pinField").hidden = !cfg.requiresPin;
+      if (cfg.appName) document.title = cfg.appName;
+      if (!state.rooms.some((r) => r.id === state.room))
+        state.room = state.rooms[0]?.id || "general";
     } catch {
-      state.rooms = [{ id: 'general', name: 'General', emoji: '📢' }];
-      selectLoginRoom('general');
+      state.rooms = [{ id: "general", name: "General", emoji: "📢" }];
+      state.room = "general";
     }
-
-    renderRooms();
-    if (state.name) $('nameInput').focus();
-
-    if (window.location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(location.hostname)) {
-      setTimeout(() => {
-        showPttError(
-          'Conexión no segura',
-          'Para usar el micrófono, abre la app con HTTPS. El servidor tiene un modo seguro: arranca con "npm run https" y entra por https://…'
-        );
-      }, 1200);
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+    drawRooms();
+    drawHeader();
+  })();
 })();

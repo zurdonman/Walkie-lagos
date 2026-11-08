@@ -49,7 +49,6 @@ async function run({ useWorklet }) {
     json: async () => ({
       rooms: [{ id: 'general', name: 'General', emoji: '📢' }],
       requiresPin: false,
-      alertsEnabled: true,
     }),
   });
   window.isSecureContext = true;
@@ -90,6 +89,7 @@ async function run({ useWorklet }) {
       return { duration: len / rate, copyToChannel() {} };
     }
     createScriptProcessor() {
+      if (useWorklet) throw new Error('no debería usarse');
       scriptProc = { onaudioprocess: null, connect: (n) => n, disconnect() {} };
       return scriptProc;
     }
@@ -133,12 +133,12 @@ async function run({ useWorklet }) {
 
   doc.getElementById('ptt').dispatchEvent(new window.Event('pointerdown', { bubbles: true, cancelable: true }));
   await new Promise((r) => setTimeout(r, 90));
-  socket.onmessage({ data: JSON.stringify({ type: 'talkAccept', scope: 'room', maxSeconds: 45 }) });
+  socket.onmessage({ data: JSON.stringify({ type: 'talkAccept', maxSeconds: 45 }) });
   await new Promise((r) => setTimeout(r, 40));
 
   if (useWorklet) {
     check(Boolean(workletNode), 'usa AudioWorklet cuando está disponible');
-    check(!scriptProc, 'no crea el plan B');
+    check(!scriptProc, 'no usa el plan B');
     workletNode.port.onmessage({ data: new Int16Array(320).fill(1200).buffer });
   } else {
     check(Boolean(scriptProc?.onaudioprocess), 'cae al plan B si no hay AudioWorklet');

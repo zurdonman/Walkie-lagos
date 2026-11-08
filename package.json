@@ -9,9 +9,7 @@
     "start": "node server.js",
     "https": "node server.js --https",
     "cert": "bash scripts/gen-cert.sh",
-    "dev": "node --watch server.js",
-    "test": "node test/protocol.test.mjs && node test/config.test.mjs && node test/deploy.test.mjs && node test/audio.test.mjs && node test/ui.test.mjs",
-    "check": "node scripts/check-config.js"
+    "test": "node test/protocol.test.mjs && node test/audio.test.mjs && node test/ui.test.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -22,7 +20,6 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "jsdom": "^31.0.0",
-    "yaml": "^2.9.1"
+    "jsdom": "^31.0.0"
   }
 }

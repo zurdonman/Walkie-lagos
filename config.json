@@ -1,14 +1,11 @@
 {
   "appName": "Walkie Lagos",
-  "tagline": "Radio interna del restaurante",
   "pin": "lagos",
   "maxTalkSeconds": 45,
-  "maxAlertSeconds": 25,
-  "alertsEnabled": true,
   "rooms": [
-    { "id": "general", "name": "General", "emoji": "📢", "color": "#f59e0b" },
-    { "id": "cocina", "name": "Cocina", "emoji": "🍳", "color": "#ef4444" },
-    { "id": "sala", "name": "Sala", "emoji": "🍽️", "color": "#22c55e" },
-    { "id": "barra", "name": "Barra", "emoji": "🍺", "color": "#38bdf8" }
+    { "id": "general", "name": "General", "emoji": "📢" },
+    { "id": "cocina", "name": "Cocina", "emoji": "🍳" },
+    { "id": "sala", "name": "Sala", "emoji": "🍽️" },
+    { "id": "barra", "name": "Barra", "emoji": "🍺" }
   ]
 }

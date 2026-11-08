@@ -1,13 +1,11 @@
 /**
- * Prueba de integración del protocolo: tres clientes, canales, directos y avisos.
- * Arranca su propio servidor en un puerto libre y lo para al terminar.
- *
- *   node test/protocol.test.mjs
+ * Prueba del servidor con dos clientes: entrar, hablar, chat y cambio de canal.
+ * Uso: node test/protocol.test.mjs
  */
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 
-const PORT = 3299 + Math.floor(Math.random() * 200);
+const PORT = 3300 + Math.floor(Math.random() * 200);
 const BASE = `http://127.0.0.1:${PORT}`;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -18,167 +16,109 @@ function check(cond, msg) {
 }
 
 const server = spawn('node', ['server.js'], {
-  cwd: process.cwd(),
   env: { ...process.env, PORT: String(PORT) },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
-server.stderr.on('data', (d) => process.stderr.write(d));
+let log = '';
+server.stdout.on('data', (d) => (log += d));
+server.stderr.on('data', (d) => (log += d));
+for (let i = 0; i < 60 && !log.includes('PIN:'); i++) await wait(100);
 
-await new Promise((resolve, reject) => {
-  const t = setTimeout(() => reject(new Error('el servidor no arranca')), 8000);
-  server.stdout.on('data', (d) => {
-    if (String(d).includes('Escuchando')) {
-      clearTimeout(t);
-      resolve();
-    }
-  });
-});
-
-function mk(name, room) {
+function join(name, room, pin = 'lagos') {
   return new Promise((resolve, reject) => {
-    const c = { name, msgs: [], audio: 0, ws: new WebSocket(`ws://127.0.0.1:${PORT}/ws`) };
-    c.ws.binaryType = 'nodebuffer';
-    c.ws.on('open', () => c.ws.send(JSON.stringify({ type: 'join', name, pin: 'lagos', room })));
-    c.ws.on('message', (data, isBinary) => {
-      if (isBinary) {
-        c.audio += 1;
+    const client = { name, msgs: [], audio: 0, ws: new WebSocket(`ws://127.0.0.1:${PORT}/ws`) };
+    client.ws.binaryType = 'nodebuffer';
+    client.ws.on('open', () => client.ws.send(JSON.stringify({ type: 'join', name, pin, room })));
+    client.ws.on('message', (data, binary) => {
+      if (binary) {
+        client.audio += 1;
         return;
       }
-      const m = JSON.parse(data.toString());
-      c.msgs.push(m);
-      if (m.type === 'welcome') {
-        c.id = m.you.id;
-        resolve(c);
+      const msg = JSON.parse(data.toString());
+      client.msgs.push(msg);
+      if (msg.type === 'welcome') {
+        client.id = msg.you.id;
+        resolve(client);
       }
-      if (m.type === 'error') reject(new Error(m.message));
+      if (msg.type === 'error' && !client.id) reject(new Error(msg.message));
     });
-    c.ws.on('error', reject);
+    client.ws.on('error', reject);
     setTimeout(() => reject(new Error(`timeout ${name}`)), 4000);
   });
 }
 
-const got = (c, type) => c.msgs.filter((m) => m.type === type);
-const last = (c, type) => got(c, type).at(-1);
-const send = (c, payload) => c.ws.send(JSON.stringify(payload));
+const last = (client, type) => client.msgs.filter((m) => m.type === type).at(-1);
+const say = (client, payload) => client.ws.send(JSON.stringify(payload));
 
 try {
-  console.log('\nCONFIGURACIÓN');
+  console.log('\nENTRAR');
   const cfg = await (await fetch(`${BASE}/api/config`)).json();
-  check(cfg.rooms.length >= 2, 'la API pública los canales');
-  check(cfg.requiresPin === true, 'la API indica que hace falta PIN');
-  check(cfg.alertsEnabled === true, 'los avisos prioritarios están activos');
-  const health = await (await fetch(`${BASE}/healthz`)).json();
-  check(health.ok === true, 'healthz responde');
+  check(cfg.rooms.length === 4 && cfg.requiresPin === true, 'la API da canales y pide PIN');
 
-  const marta = await mk('Marta', 'cocina');
-  const luis = await mk('Luis', 'cocina');
-  const ana = await mk('Ana', 'sala');
+  const marta = await join('Marta', 'cocina');
+  const luis = await join('Luis', 'cocina');
+  const ana = await join('Ana', 'sala');
   await wait(150);
-  const roomsUpdate = last(marta, 'rooms');
-  check(roomsUpdate?.rooms.find((r) => r.id === 'cocina').count === 2, 'el canal cuenta 2 personas');
+  check(last(marta, 'rooms').rooms.find((r) => r.id === 'cocina').count === 2, 'el canal cuenta a los dos');
+  check(last(marta, 'presence').online === 3, 'hay 3 personas conectadas');
 
-  console.log('\nPIN Y VALIDACIONES');
   const bad = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
-  const badMsg = await new Promise((resolve) => {
+  const denied = await new Promise((resolve) => {
     bad.on('open', () => bad.send(JSON.stringify({ type: 'join', name: 'X', pin: 'malo', room: 'cocina' })));
     bad.on('message', (d) => resolve(JSON.parse(d.toString())));
   });
-  check(badMsg.message === 'PIN incorrecto.', 'rechaza PIN incorrecto');
   bad.close();
+  check(denied.message === 'PIN incorrecto.', 'rechaza un PIN incorrecto');
 
-  console.log('\nHABLAR AL CANAL');
-  send(marta, { type: 'talk', on: true, scope: { kind: 'room' }, rate: 16000 });
+  console.log('\nHABLAR');
+  say(marta, { type: 'talk', on: true });
   await wait(120);
   for (let i = 0; i < 3; i++) marta.ws.send(Buffer.alloc(640));
   await wait(200);
-  check(last(marta, 'talkAccept')?.scope === 'room', 'Marta obtiene el turno del canal');
-  check(luis.audio === 3, 'Luis recibe los 3 paquetes de audio');
-  check(ana.audio === 0, 'Ana (otra sala) no oye nada');
-  check(last(luis, 'talkStart')?.from === 'Marta', 'Luis ve quién habla');
+  check(Boolean(last(marta, 'talkAccept')), 'Marta recibe el turno');
+  check(luis.audio === 3, 'Luis oye los 3 paquetes');
+  check(ana.audio === 0, 'Ana, en otro canal, no oye nada');
 
-  send(luis, { type: 'talk', on: true, scope: { kind: 'room' } });
+  say(luis, { type: 'talk', on: true });
   await wait(120);
-  check(last(luis, 'talkDeny')?.by === 'Marta', 'a Luis se le deniega el turno ocupado');
+  check(last(luis, 'talkDeny')?.by === 'Marta', 'a Luis se le avisa de que está ocupado');
 
   marta.ws.close();
   await wait(200);
-  check(Boolean(last(luis, 'talkEnd')), 'al desconectarse se libera el turno');
-  check(last(luis, 'roster')?.users.length === 1, 'el roster se actualiza');
-  luis.ws.send(JSON.stringify({ type: 'talk', on: true, scope: { kind: 'room' } }));
+  check(Boolean(last(luis, 'talkEnd')), 'al irse Marta se libera el canal');
+  say(luis, { type: 'talk', on: true });
   await wait(120);
   check(Boolean(last(luis, 'talkAccept')), 'Luis ya puede hablar');
-  send(luis, { type: 'talk', on: false });
-  await wait(80);
+  say(luis, { type: 'talk', on: false });
 
-  console.log('\nHABLAR A UNA SOLA PERSONA');
-  const marta2 = await mk('Marta', 'cocina');
+  console.log('\nCHAT');
+  const marta2 = await join('Marta', 'cocina');
   await wait(100);
-  send(marta2, { type: 'talk', on: true, scope: { kind: 'dm', to: ana.id } });
-  await wait(120);
-  const beforeLuis = luis.audio;
-  for (let i = 0; i < 2; i++) marta2.ws.send(Buffer.alloc(640));
-  await wait(180);
-  check(last(marta2, 'talkAccept')?.scope === 'dm', 'Marta obtiene un turno privado');
-  check(last(ana, 'dmOffer')?.from === 'Marta', 'Ana recibe el aviso de conversación privada');
-  check(ana.audio === 2, 'Ana oye el audio privado');
-  check(luis.audio === beforeLuis, 'Luis no oye la conversación privada');
-  send(marta2, { type: 'talk', on: false });
-
-  send(marta2, { type: 'talk', on: true, scope: { kind: 'dm', to: 'no-existe' } });
-  send(marta2, { type: 'talk', on: true, scope: { kind: 'dm', to: marta2.id } });
+  say(marta2, { type: 'chat', text: 'Mesa 3 lista' });
   await wait(150);
-  const errs = got(marta2, 'error').map((e) => e.message);
-  check(errs.includes('Esa persona ya no está conectada.'), 'valida destinatario inexistente');
-  check(errs.includes('No puedes hablar contigo mismo.'), 'valida hablar contigo mismo');
+  check(last(luis, 'chat')?.text === 'Mesa 3 lista', 'el mensaje llega al canal');
+  check(last(ana, 'chat') === undefined, 'y no sale de él');
+  check(last(marta2, 'chat')?.text === 'Mesa 3 lista', 'quien escribe también lo ve');
 
-  console.log('\nAVISO PRIORITARIO');
-  const anaBefore = ana.audio;
-  send(luis, { type: 'talk', on: true, scope: { kind: 'alert' } });
-  await wait(140);
-  luis.ws.send(Buffer.alloc(640));
-  luis.ws.send(Buffer.alloc(640));
-  await wait(180);
-  check(last(luis, 'talkAccept')?.scope === 'alert', 'Luis obtiene el turno de aviso');
-  check(last(ana, 'talkStart')?.alert === true, 'Ana ve que es un aviso prioritario');
-  check(ana.audio === anaBefore + 2, 'el aviso se oye en OTRO canal (sala)');
-  check(Boolean(last(marta2, 'talkStart')?.alert), 'y también en cocina');
-  send(luis, { type: 'talk', on: false });
-  await wait(80);
-
-  console.log('\nAVISO ESCRITO Y CHAT');
-  send(luis, { type: 'alert', text: 'Se ha ido la luz en cocina' });
-  await wait(150);
-  check(last(ana, 'alert')?.text === 'Se ha ido la luz en cocina', 'el aviso escrito llega a todos');
-  check(last(marta2, 'alert')?.text === 'Se ha ido la luz en cocina', 'también a los de cocina');
-
-  send(marta2, { type: 'chat', to: ana.id, text: '¿Queda flan?' });
-  await wait(150);
-  check(last(ana, 'chat')?.text === '¿Queda flan?', 'el chat privado llega al destinatario');
-  check(!got(luis, 'chat').some((m) => m.text === '¿Queda flan?'), 'y no lo ve el resto');
-
-  send(marta2, { type: 'chat', text: 'Mesa 3 lista' });
-  await wait(150);
-  check(got(luis, 'chat').some((m) => m.text === 'Mesa 3 lista'), 'el chat de canal llega a los del canal');
-
-  console.log('\nCAMBIOS DE CANAL');
-  send(ana, { type: 'switch', room: 'cocina' });
+  console.log('\nCANALES');
+  say(ana, { type: 'switch', room: 'cocina' });
   await wait(150);
   check(last(ana, 'switched')?.room === 'cocina', 'Ana cambia de canal');
-  check(last(luis, 'roster')?.users.some((u) => u.name === 'Ana'), 'y aparece en el roster de cocina');
-  send(ana, { type: 'switch', room: 'no-existe' });
+  check(last(luis, 'roster').users.some((u) => u.name === 'Ana'), 'y aparece en la lista');
+  say(ana, { type: 'switch', room: 'no-existe' });
   await wait(100);
-  check(got(ana, 'error').some((e) => e.message === 'Ese canal no existe.'), 'rechaza canales inexistentes');
+  check(last(ana, 'error')?.message === 'Ese canal no existe.', 'rechaza canales que no existen');
 
-  for (const c of [marta2, luis, ana]) c.ws.close();
+  for (const c of [luis, ana, marta2]) c.ws.close();
   await wait(250);
   const finalCfg = await (await fetch(`${BASE}/api/config`)).json();
-  check(finalCfg.online === 0, 'al cerrar todos, el servidor queda limpio');
+  check(finalCfg.rooms.every((r) => r.count === 0), 'al irse todos los canales quedan vacíos');
 } catch (error) {
-  console.error('\nError inesperado:', error);
+  console.error('\nError:', error);
   failures += 1;
 }
 
 server.kill('SIGTERM');
-await wait(200);
+await wait(300);
 console.log(failures === 0 ? '\nTODO OK\n' : `\n${failures} FALLOS\n`);
 process.exit(failures === 0 ? 0 : 1);
