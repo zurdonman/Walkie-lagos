@@ -238,6 +238,25 @@ ok('SYSTEM_ALERT_WINDOW' in open('android/app/src/main/AndroidManifest.xml').rea
 ok('enableFloating' in lan_svc and 'enableFloating' in open('android/app/src/main/java/com/walkielagos/app/VoiceService.kt').read(),
    'los dos modos (wifi y servidor) tienen botón flotante')
 
+layout_txt = open('android/app/src/main/res/layout/activity_main.xml').read()
+print("\nCAMBIAR DE CANAL DESDE DENTRO")
+ok('@+id/roomLabel' in layout_txt and 'MaterialButton' in layout_txt.split('@+id/roomLabel')[0][-120:],
+   'el nombre del canal es un botón (se toca y se cambia)')
+ok('ic_arrow_down' in layout_txt, 'con flecha para que se vea que se despliega')
+import re as _re2
+anchos = []
+for _boton in ('leaveButton', 'floatButton', 'roomButton', 'logButton'):
+    _i = layout_txt.index(f'@+id/{_boton}')
+    _frag = layout_txt[_i:_i + 800]
+    anchos.append('android:layout_width="0dp"' in _frag and 'android:layout_weight="1"' in _frag)
+ok(all(anchos), 'los cuatro botones caben a partes iguales (antes se salía «Canal»)')
+ok('pickRoom()' in main_act and 'setSingleChoiceItems' in main_act, 'abre la lista de canales')
+ok('● ' in main_act and '○ ' in main_act, 'se ve cuál es el canal actual')
+ok('Lan.ROOMS.map' in main_act, 'se listan los cinco canales')
+ok('changeRoom(which)' in main_act, 'al elegir, cambia de canal')
+ok('Event.RoomChanged' in lan_svc, 'el servicio confirma el cambio y recarga el historial')
+ok('paintFloatingButton' in main_act, 'el botón Flotante muestra si está puesto (✓)')
+
 print("\nCHAT Y LO HABLADO EN EL CHAT")
 layout_txt = open('android/app/src/main/res/layout/activity_main.xml').read()
 ok('@+id/chatBar' in layout_txt and 'layout_weight="1"' in layout_txt.split('@+id/chatBar')[1][:400],
@@ -277,7 +296,7 @@ ok('assembleRelease' in wf3 and 'walkie-lagos-diagnostico.apk' in wf3, 'se publi
 ok('keystore.b64' in wf3, 'los dos van firmados con la misma clave')
 ok(os.path.exists('scripts/keystore.b64'), 'la clave está en el repositorio (APK actualizables)')
 gradle2 = open('android/app/build.gradle.kts').read()
-ok('versionCode = 6' in gradle2, 'la versión sube para poder instalar encima')
+ok('versionCode = 7' in gradle2, 'la versión sube para poder instalar encima')
 
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)

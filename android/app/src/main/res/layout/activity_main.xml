@@ -156,15 +156,24 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <TextView
+            <!-- El canal se toca aquí mismo para cambiarse. -->
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/roomLabel"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:gravity="start|center_vertical"
+                android:minWidth="0dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="4dp"
                 android:text="@string/connecting"
+                android:textAllCaps="false"
                 android:textColor="@color/text"
                 android:textSize="18sp"
-                android:textStyle="bold" />
+                app:icon="@drawable/ic_arrow_down"
+                app:iconGravity="end"
+                app:iconTint="@color/accent" />
 
             <TextView
                 android:id="@+id/online"
@@ -235,30 +244,58 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/leaveButton"
                 style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:maxLines="1"
+                android:textSize="12sp"
                 android:text="@string/leave" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/floatButton"
                 style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="@string/float_show" />
+                android:layout_weight="1"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:maxLines="1"
+                android:textSize="12sp"
+                android:text="@string/float_short" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/roomButton"
                 style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:maxLines="1"
+                android:textSize="12sp"
                 android:text="@string/change_room" />
 
             <!-- Deja ver y enviar el registro si la app se cierra o algo falla. -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/logButton"
                 style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:maxLines="1"
+                android:textSize="12sp"
                 android:text="@string/log_button" />
         </LinearLayout>
     </LinearLayout>
