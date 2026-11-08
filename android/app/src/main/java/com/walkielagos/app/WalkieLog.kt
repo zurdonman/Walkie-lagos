@@ -145,6 +145,26 @@ object WalkieLog {
         appendTo(File(privateDir(ctx), LOG_NAME), "SE HA CERRADO LA APP; informe guardado\n")
     }
 
+    /**
+     * Deja una copia del registro (y del informe de fallo) donde la app pueda
+     * enviarla sin problemas: su carpeta privada. Devuelve esa copia.
+     */
+    fun copyForSharing(ctx: Context): List<File> {
+        val out = ArrayList<File>()
+        val dir = privateDir(ctx).apply { mkdirs() }
+        for (name in listOf(LOG_NAME, CRASH_NAME)) {
+            for (from in listOf(File(downloadDir(), name), File(dir, name))) {
+                if (from.exists()) {
+                    val to = File(dir, name)
+                    if (from.absolutePath != to.absolutePath) runCatching { from.copyTo(to, overwrite = true) }
+                    out.add(to)
+                    break
+                }
+            }
+        }
+        return out
+    }
+
     /** Copia el registro en la carpeta de Descargas (por si solo estaba en la privada). */
     fun exportToDownloads(ctx: Context): Boolean = runCatching {
         val from = File(privateDir(ctx), LOG_NAME)

@@ -90,7 +90,7 @@ class LanRadio(
                 throw IllegalStateException("no hay wifi conectada")
             }
             if (wifi.address != null) {
-                WalkieLog.i("Radio wifi: mi IP en la wifi es ${wifi.address.hostAddress} (${wifi.interfaceName})")
+                WalkieLog.i("Radio wifi: mi IP en la wifi es ${wifi.address.hostAddress} (${wifi.device.name})")
             }
             runCatching {
                 socket.networkInterface = wifi.device
@@ -132,7 +132,7 @@ class LanRadio(
             }
             send(Lan.TYPE_HEARTBEAT)
             WalkieLog.i("Radio wifi: escuchando en ${Lan.GROUP}:${Lan.PORT} (canal ${Lan.ROOMS.getOrElse(room) { "?" }})")
-            status = "Te escuchas en ${wifi.interfaceName} ${wifi.address?.hostAddress ?: ""} · grupo ${Lan.GROUP}" +
+            status = "Te escuchas en ${wifi.device.name} ${wifi.address?.hostAddress ?: ""} · grupo ${Lan.GROUP}" +
                 " (${joined.joinToString(", ")})".takeIf { joined.isNotEmpty() }.orEmpty()
         } catch (error: Exception) {
             WalkieLog.e("Radio wifi: no arranca", error)
@@ -144,13 +144,18 @@ class LanRadio(
     /** Interfaz de la wifi conectada, con su dirección IPv4 si se puede. */
     private fun wifiInterface(): WifiInterface? {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        // No se exige internet: la wifi del local puede no tenerlo y la radio funciona igual.
         val network = cm.allNetworks.firstOrNull { candidate ->
             val caps = cm.getNetworkCapabilities(candidate) ?: return@firstOrNull false
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        } ?: return null
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        } ?: return ipv4Interfaces()
+            .firstOrNull { it.name.startsWith("wlan") }
+            ?.let { WifiInterface(it, it.inetAddresses.toList().firstOrNull { a -> a is Inet4Address }) }
         val properties = cm.getLinkProperties(network)
-        val device = NetworkInterface.getByName(properties?.interfaceName ?: "")
-            ?: ipv4Interfaces().firstOrNull { it.name.startsWith("wlan") }
+        // Si el sistema no dice el nombre (algunas ROM), se busca la interfaz wlan*.
+        val byName = NetworkInterface.getByName(properties?.interfaceName ?: "")
+        val device = byName
+            ?: ipv4Interfaces().firstOrNull { it.name.startsWith("wlan") || it.name.startsWith("ap") }
             ?: return null
         val address = properties?.linkAddresses
             ?.map { it.address }

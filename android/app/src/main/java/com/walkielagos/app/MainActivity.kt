@@ -170,12 +170,11 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             .setPositiveButton("Compartir") { _, _ ->
                 val ctx = this
                 runCatching { WalkieLog.exportToDownloads(ctx) }
-                val target = when {
-                    File(WalkieLog.downloadDir(), "walkie-crash.txt").exists() -> File(WalkieLog.downloadDir(), "walkie-crash.txt")
-                    File(WalkieLog.downloadDir(), "walkie-log.txt").exists() -> File(WalkieLog.downloadDir(), "walkie-log.txt")
-                    File(WalkieLog.privateDir(ctx), "walkie-crash.txt").exists() -> File(WalkieLog.privateDir(ctx), "walkie-crash.txt")
-                    else -> File(WalkieLog.privateDir(ctx), "walkie-log.txt")
-                }
+                // Se trabaja sobre una copia en la carpeta de la app: se puede enviar siempre.
+                val copias = WalkieLog.copyForSharing(ctx)
+                val target = copias.firstOrNull { it.name.contains("crash") }
+                    ?: copias.firstOrNull()
+                    ?: File(WalkieLog.privateDir(ctx), "walkie-log.txt")
                 if (!target.exists()) {
                     toast("Todavía no hay registro")
                 } else {
