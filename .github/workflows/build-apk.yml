@@ -60,6 +60,9 @@ jobs:
           mkdir -p "$HOME/.walkie"
           base64 -d scripts/keystore.b64 > "$HOME/.walkie/walkie.p12"
           ls -l "$HOME/.walkie/walkie.p12"
+          echo "WALKIE_KEYSTORE=$HOME/.walkie/walkie.p12" >> "$GITHUB_ENV"
+          echo "WALKIE_KEY_PASS=walkie2024" >> "$GITHUB_ENV"
+          echo "WALKIE_KEY_ALIAS=walkie" >> "$GITHUB_ENV"
 
       - name: Compilar
         working-directory: android

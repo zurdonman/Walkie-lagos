@@ -15,12 +15,31 @@ android {
         versionName = "1.1"
     }
 
+    // Clave propia para que las actualizaciones se instalen encima (con dos claves
+    // distintas Android obliga a desinstalar). La acción de GitHub deja el archivo en
+    // la ruta de la variable WALKIE_KEYSTORE; sin ella, se usa la clave de depuración.
+    val keyStorePath: String? = System.getenv("WALKIE_KEYSTORE")
+    signingConfigs {
+        if (keyStorePath != null && file(keyStorePath).exists()) {
+            create("walkie") {
+                storeFile = file(keyStorePath)
+                storeType = "pkcs12"
+                storePassword = System.getenv("WALKIE_KEY_PASS") ?: "walkie2024"
+                keyAlias = System.getenv("WALKIE_KEY_ALIAS") ?: "walkie"
+                keyPassword = System.getenv("WALKIE_KEY_PASS") ?: "walkie2024"
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Firmado: la acción de GitHub inyecta la clave; sin ella se queda sin firmar
-            // (no instalable), así que el APK de depuración es el que se publica.
-            signingConfig = signingConfigs.findByName("debug")
+            signingConfig = signingConfigs.findByName("walkie") ?: signingConfigs.getByName("debug")
+        }
+        debug {
+            signingConfig = signingConfigs.findByName("walkie") ?: signingConfigs.getByName("debug")
         }
     }
 
