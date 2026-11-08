@@ -108,6 +108,27 @@ Detalles que evitan los cuelgues típicos de estas apps: ping/pong cada 20 segun
 tirar conexiones muertas, reconexión automática al volver el wifi, y liberar el turno
 cuando alguien se desconecta.
 
+## Si la app se cierra o algo va mal
+
+Hay **dos APK** en cada Release, firmados con la misma clave (así el de pruebas se
+instala encima del normal, sin desinstalar):
+
+- `walkie-lagos.apk` → **el normal**, el del día a día.
+- `walkie-lagos-diagnostico.apk` → **el de pruebas**. Además de funcionar igual, deja
+  escritos todos sus pasos y cualquier fallo en:
+
+  ```
+  Descargas/log walkie/walkie-log.txt     (lo que va pasando)
+  Descargas/log walkie/walkie-crash.txt   (el fallo completo, si la app se cierra)
+  ```
+
+  Si Android no deja escribir en Descargas, se guarda dentro de la app y el botón
+  **Registro** (abajo, junto a «Salir») lo envía por el móvil (WhatsApp, correo…).
+
+Cómo mandarme el diagnóstico: instala el APK de pruebas, abre la app, reproduce el
+problema y pásame `walkie-crash.txt` (o `walkie-log.txt` si no llegó a generarse el
+otro). Con eso se ve exactamente qué falló y en qué móvil.
+
 ## Pruebas
 
 ```bash

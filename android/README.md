@@ -17,6 +17,24 @@ En la pantalla de entrada se elige:
 | Canales | General, Cocina, Sala, Barra | los que tenga `config.json` |
 | Lo hablado | transcrito en el propio móvil y guardado | igual |
 
+## Dos APK y registro de fallos
+
+Cada Release publica `walkie-lagos.apk` (normal) y `walkie-lagos-diagnostico.apk`
+(depurable, con el mismo código). Los dos van firmados con la misma clave
+(`scripts/keystore.b64` → `WALKIE_KEYSTORE` en la compilación), así uno se instala
+encima del otro.
+
+En el de diagnóstico, `WalkieLog` escribe:
+
+- `Descargas/log walkie/walkie-log.txt`: cada paso (arranque, modo, canal, errores).
+- `Descargas/log walkie/walkie-crash.txt`: la pila del fallo si la app se cierra,
+  con los datos del móvil y las últimas 60 líneas del registro.
+
+En Android 10+ no hace falta permiso (carpeta de Descargas pública); en Android 9 y
+anteriores se pide `WRITE_EXTERNAL_STORAGE` solo para eso. El botón **Registro** de la
+pantalla abre un diálogo con la ruta y lo comparte con `FileProvider`. Si la pantalla
+normal no se puede montar, aparece una pantalla mínima con el motivo en vez de cerrarse.
+
 ## Transcripción (lo hablado queda escrito)
 
 Cuando alguien suelta el botón, el móvil **de quien habló** no hace nada especial: cada
