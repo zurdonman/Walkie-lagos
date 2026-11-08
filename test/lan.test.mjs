@@ -80,6 +80,29 @@ marta.releaseTalk();
 await wait(200);
 check(events.b.some((e) => e.type === 'speakerEnd'), 'y que ha terminado');
 
+console.log('\nENTRAR Y VER A LOS DEMÁS (el caso que fallaba en el móvil)');
+// Ninguno de los dos fuerza latidos: basta con lo que manda la radio sola en 2,5 s.
+events.a.length = 0;
+events.b.length = 0;
+const solos = new (await import('../lan/radio.mjs')).LanRadio({
+  name: 'Pepe',
+  room: 'general',
+  nodeId: '3333333333333333',
+  onEvent: (e) => events.a.push(e),
+});
+await solos.start();
+await wait(120);
+check(
+  marta.peers.has(solos.nodeId) || solos.peers.has(marta.nodeId),
+  'al entrar ya se oyen entre sí, sin pulsar nada',
+);
+await wait(2600);
+check(marta.peers.has(solos.nodeId), 'Marta ve a Pepe tras su primer latido');
+check(solos.peers.has(marta.nodeId), 'Pepe ve a Marta tras su primer latido');
+// 3 porque Luis sigue en la wifi (está en el canal; aún no se ha ido).
+check(solos.onlineCount === 3, `la cuenta de la wifi es correcta (${solos.onlineCount})`);
+await solos.stop();
+
 console.log('\nLO HABLADO SE QUEDA ESCRITO');
 // El hablante transcribe su propia voz y manda el texto: en un restaurante real
 // puede llegar un segundo después, así que el otro móvil debe guardarlo igual.

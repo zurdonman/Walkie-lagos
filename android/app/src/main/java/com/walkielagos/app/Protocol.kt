@@ -41,6 +41,10 @@ sealed interface Event {
     data class Failure(val message: String) : Event
     data object Connected : Event
     data class Disconnected(val reason: String) : Event
+    /** Estado de la radio wifi, para enseñarlo en pantalla y en el registro. */
+    data class Status(val text: String) : Event
+    /** Cuántos móviles hay escuchando en la wifi (yo incluido). */
+    data class PeerCount(val count: Int) : Event
     /** Un trozo de voz del compañero. */
     data class Audio(val bytes: ByteArray) : Event {
         override fun equals(other: Any?) = this === other

@@ -78,7 +78,12 @@ class LanService : Service(), LanRadio.Listener {
                 stopSelf()
             }
             null -> Unit
-            else -> if (radio == null) {
+            else -> if (radio != null) {
+                // Ya estaba escuchando (la pantalla se cerró y se volvió a abrir): se le
+                // manda el estado para que sepa dónde está y a quién oye.
+                listener?.invoke(Event.Status(radio?.status.orEmpty()))
+                listener?.invoke(Event.PeerCount(radio?.peerCount ?: 1))
+            } else {
                 val name = intent?.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { "Móvil" }
                 val room = intent?.getIntExtra(EXTRA_ROOM, 0) ?: 0
                 val nodeId = intent?.getStringExtra(EXTRA_NODE_ID)
@@ -203,7 +208,9 @@ class LanService : Service(), LanRadio.Listener {
     }
 
     override fun onPeerCount(count: Int) {
-        listener?.invoke(Event.Presence(count))
+        val status = radio?.status
+        if (!status.isNullOrBlank()) listener?.invoke(Event.Status(status))
+        listener?.invoke(Event.PeerCount(count))
     }
 
     override fun onChat(from: String, text: String) {

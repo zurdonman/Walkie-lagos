@@ -1,7 +1,11 @@
 package com.walkielagos.app
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -51,6 +55,13 @@ class LanRadio(
     var talking = false
         private set
 
+    /** Cuántos hay escuchando (yo incluido). */
+    val peerCount: Int get() = peers.size + 1
+
+    /** Resumen del estado de la radio, para enseñarlo en pantalla y en el registro. */
+    var status: String = ""
+        private set
+
     val isRunning: Boolean get() = running.get()
 
     fun start() {
@@ -68,8 +79,46 @@ class LanRadio(
             socket.reuseAddress = true
             socket.bind(InetSocketAddress(Lan.PORT))
             socket.timeToLive = 1
-            socket.joinGroup(group)
             this.socket = socket
+
+            // Aquí se decide todo: Android puede tener datos móviles y wifi a la vez y,
+            // si no se le dice, manda el multicast por los datos (se pierde) o se une al
+            // grupo en la interfaz equivocada y no oye nada. Se elige la wifi a mano.
+            val wifi = wifiInterface()
+            WalkieLog.i("Radio wifi: red ${wifi ?: "no encontrada"}")
+            if (wifi == null) {
+                throw IllegalStateException("no hay wifi conectada")
+            }
+            if (wifi.address != null) {
+                WalkieLog.i("Radio wifi: mi IP en la wifi es ${wifi.address.hostAddress} (${wifi.interfaceName})")
+            }
+            runCatching {
+                socket.networkInterface = wifi.device
+                WalkieLog.i("Radio wifi: envío por ${wifi.device.name}")
+            }.onFailure { WalkieLog.w("Radio wifi: no se pudo fijar la interfaz de envío", it) }
+
+            // Se pide el grupo en la wifi (imprescindible) y también en el resto de
+            // interfaces IPv4, por si el router o el móvil obligan a otra.
+            val joined = ArrayList<String>()
+            for (iface in ipv4Interfaces()) {
+                try {
+                    socket.joinGroup(InetSocketAddress(group, Lan.PORT), iface)
+                    joined.add(iface.name)
+                } catch (error: Exception) {
+                    WalkieLog.w("Radio wifi: no se pudo unir al grupo en ${iface.name}", error)
+                }
+            }
+            if (joined.isEmpty()) {
+                // Último recurso: el método clásico, que elige la interfaz por sí solo.
+                runCatching {
+                    socket.joinGroup(group)
+                    joined.add("(automática)")
+                }.onFailure { WalkieLog.w("Radio wifi: tampoco el método automático", it) }
+            }
+            WalkieLog.i("Radio wifi: unido al grupo en ${joined.joinToString(", ").ifEmpty { "ninguna interfaz" }}")
+            if (joined.isEmpty()) {
+                throw IllegalStateException("ninguna interfaz acepta el grupo multicast")
+            }
 
             receiveThread = Thread { receiveLoop(socket, group) }.apply {
                 isDaemon = true
@@ -82,11 +131,44 @@ class LanRadio(
                 start()
             }
             send(Lan.TYPE_HEARTBEAT)
+            WalkieLog.i("Radio wifi: escuchando en ${Lan.GROUP}:${Lan.PORT} (canal ${Lan.ROOMS.getOrElse(room) { "?" }})")
+            status = "Te escuchas en ${wifi.interfaceName} ${wifi.address?.hostAddress ?: ""} · grupo ${Lan.GROUP}" +
+                " (${joined.joinToString(", ")})".takeIf { joined.isNotEmpty() }.orEmpty()
         } catch (error: Exception) {
+            WalkieLog.e("Radio wifi: no arranca", error)
             stop()
             listener.onError("No se puede abrir la radio en la wifi: ${error.message}. Comprueba que estás conectado a la wifi del local.")
         }
     }
+
+    /** Interfaz de la wifi conectada, con su dirección IPv4 si se puede. */
+    private fun wifiInterface(): WifiInterface? {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.allNetworks.firstOrNull { candidate ->
+            val caps = cm.getNetworkCapabilities(candidate) ?: return@firstOrNull false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } ?: return null
+        val properties = cm.getLinkProperties(network)
+        val device = NetworkInterface.getByName(properties?.interfaceName ?: "")
+            ?: ipv4Interfaces().firstOrNull { it.name.startsWith("wlan") }
+            ?: return null
+        val address = properties?.linkAddresses
+            ?.map { it.address }
+            ?.firstOrNull { it is Inet4Address }
+        return WifiInterface(device, address)
+    }
+
+    private data class WifiInterface(val device: NetworkInterface, val address: InetAddress?)
+
+    /** Interfaces con IPv4 que pueden llevar multicast (fuera loopback y las virtuales). */
+    private fun ipv4Interfaces(): List<NetworkInterface> = runCatching {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { iface ->
+                iface.isUp && !iface.isLoopback &&
+                    iface.inetAddresses.toList().any { it is Inet4Address } &&
+                    !iface.name.startsWith("rmnet") && !iface.name.startsWith("p2p")
+            }
+    }.getOrDefault(emptyList())
 
     fun stop() {
         running.set(false)
@@ -136,10 +218,17 @@ class LanRadio(
     private fun receiveLoop(socket: MulticastSocket, group: InetAddress) {
         val buffer = ByteArray(2048)
         val packet = DatagramPacket(buffer, buffer.size)
+        var seen = 0
+        var lastLog = System.currentTimeMillis()
         while (running.get()) {
             try {
                 packet.length = buffer.size
                 socket.receive(packet)
+                seen++
+                if (System.currentTimeMillis() - lastLog > 30_000) {
+                    lastLog = System.currentTimeMillis()
+                    WalkieLog.i("Radio wifi: $seen paquetes recibidos hasta ahora")
+                }
                 val parsed = Lan.decode(packet.data, packet.length) ?: continue
                 if (parsed.nodeId == id) continue
                 if (parsed.room != room) continue
@@ -153,7 +242,9 @@ class LanRadio(
     }
 
     private fun handle(packet: Lan.Packet) {
+        val known = peers.containsKey(packet.nodeId)
         peers[packet.nodeId] = packet.name to System.currentTimeMillis()
+        if (!known) WalkieLog.i("Radio wifi: se oye a ${packet.name} (${packet.nodeId.take(4)}…)")
         when (packet.type) {
             Lan.TYPE_CLAIM -> {
                 if (talking && !Lan.hasPriority(id, packet.nodeId)) {
@@ -181,16 +272,18 @@ class LanRadio(
             }
             Lan.TYPE_CHAT -> {
                 val text = String(packet.payload, Charsets.UTF_8)
+                WalkieLog.i("Radio wifi: mensaje de ${packet.name}")
                 if (text.isNotBlank()) listener.onChat(packet.name, text)
             }
-            Lan.TYPE_HEARTBEAT -> listener.onPeerCount(peers.size + 1)
+            Lan.TYPE_HEARTBEAT -> listener.onPeerCount(peers.size)
             Lan.TYPE_LEAVE -> {
+                WalkieLog.i("Radio wifi: se va ${packet.name}")
                 peers.remove(packet.nodeId)
                 if (speaker == packet.nodeId) {
                     speaker = null
                     listener.onPeerSilent(packet.name)
                 }
-                listener.onPeerCount(peers.size + 1)
+                listener.onPeerCount(peers.size)
             }
         }
     }
@@ -223,7 +316,10 @@ class LanRadio(
                 speaker = null
                 listener.onPeerSilent(gone)
             }
-            if (peers.size != before || tick % 5 == 0) listener.onPeerCount(peers.size + 1)
+            if (peers.size != before) {
+                WalkieLog.i("Radio wifi: ${peers.size} compañero(s) en la wifi")
+            }
+            listener.onPeerCount(peers.size)
         }
     }
 }

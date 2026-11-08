@@ -92,10 +92,10 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         paintMode()
 
         binding.enterButton.setOnClickListener { safe("Entrar") { enter() } }
-        binding.logButton.setOnClickListener { showLogMenu() }
+        binding.logButton.setOnClickListener { safe("Registro") { showLogMenu() } }
         binding.leaveButton.setOnClickListener { leave() }
         binding.ptt.setOnTouchListener { _, event -> onPushToTalk(event) }
-        binding.sendButton.setOnClickListener { sendChat() }
+        binding.sendButton.setOnClickListener { safe("Enviar") { sendChat() } }
         binding.chatInput.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_SEND) {
                 sendChat()
@@ -179,13 +179,23 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                 if (!target.exists()) {
                     toast("Todavía no hay registro")
                 } else {
+                    // Si el archivo está en Descargas, se manda su ruta además del archivo:
+                    // siempre hay algo que copiar, aunque el otro móvil no acepte el enlace.
+                    val uri = runCatching {
+                        androidx.core.content.FileProvider.getUriForFile(ctx, "${packageName}.files", target)
+                    }.getOrNull()
+                    if (uri == null) WalkieLog.w("No se pudo preparar el archivo para enviar: ${target.absolutePath}")
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
-                        putExtra(Intent.EXTRA_STREAM, androidx.core.content.FileProvider.getUriForFile(ctx, "${packageName}.files", target))
                         putExtra(Intent.EXTRA_SUBJECT, "Registro Walkie Lagos")
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        putExtra(Intent.EXTRA_TEXT, "Registro de Walkie Lagos:\n${target.absolutePath}")
+                        if (uri != null) {
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
                     }
-                    startActivity(Intent.createChooser(send, "Enviar el registro"))
+                    runCatching { startActivity(Intent.createChooser(send, "Enviar el registro")) }
+                        .onFailure { toast("No hay app para enviar; el archivo está en Descargas/log walkie") }
                 }
             }
             .setNegativeButton("Cerrar", null)
@@ -279,6 +289,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         val nodeId = prefs.getString("nodeId", null) ?: Lan.hex(Lan.newNodeId()).also {
             prefs.edit().putString("nodeId", it).apply()
         }
+        LanService.listener = { event -> runOnUiThread { handle(event) } }
         val intent = Intent(this, LanService::class.java).apply {
             action = LanService.ACTION_START
             putExtra(LanService.EXTRA_NAME, name)
@@ -287,13 +298,14 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
 
-        LanService.listener = { event -> runOnUiThread { handle(event) } }
         loadHistory(Lan.ROOMS.getOrElse(room) { Lan.ROOMS.first() })
         binding.login.visibility = View.GONE
         binding.stage.visibility = View.VISIBLE
         binding.chatBar.visibility = View.VISIBLE
         binding.online.text = getString(R.string.peers_online, 1)
         binding.roomLabel.text = Lan.ROOMS.getOrElse(room) { Lan.ROOMS.first() }
+        binding.online.text = getString(R.string.peers_online, 1)
+        WalkieLog.i("Wifi: entrando como $name en el canal ${Lan.ROOMS.getOrElse(room) { "?" }}")
     }
 
     // ------------------------------------------------------------------ entrar
@@ -380,7 +392,8 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     private fun onPushToTalk(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (!connected) {
+                // En wifi no hace falta esperar a nadie: la radio ya está escuchando.
+                if (!lanMode && !connected) {
                     toast(getString(R.string.not_connected))
                     return true
                 }
@@ -418,6 +431,14 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     private fun handle(event: Event) {
         when (event) {
+            is Event.PeerCount -> {
+                connected = true
+                binding.online.text = getString(R.string.peers_online, event.count)
+            }
+            is Event.Status -> {
+                binding.roomLabel.text = event.text
+                WalkieLog.i("Estado: ${event.text}")
+            }
             is Event.Welcome -> {
                 connected = true
                 binding.roomLabel.text = event.room

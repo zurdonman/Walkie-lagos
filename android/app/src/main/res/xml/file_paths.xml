@@ -2,5 +2,7 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Carpeta privada donde se guarda el registro si no se puede en Descargas. -->
     <external-files-path name="logs" path="logs/" />
+    <!-- El registro tal cual, en Descargas/log walkie (para poder enviarlo). -->
+    <external-path name="descargas" path="log walkie/" />
     <files-path name="files" path="." />
 </paths>

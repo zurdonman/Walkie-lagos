@@ -185,6 +185,25 @@ ok(not sin_tamano, 'todas las vistas llevan layout_width y layout_height' + (f" 
 estilos = open('android/app/src/main/res/values/themes.xml').read()
 ok('name="Widget.Walkie.Field"' in estilos, 'el estilo de los campos existe')
 
+print("\nRADIO WIFI (que se oigan los móviles)")
+radio_kt = open('android/app/src/main/java/com/walkielagos/app/LanRadio.kt').read()
+ok('NetworkInterface' in radio_kt, 'elige la interfaz de la wifi (no los datos móviles)')
+ok('setNetworkInterface' in radio_kt or 'networkInterface =' in radio_kt, 'el envío sale por la wifi')
+ok('joinGroup(InetSocketAddress' in radio_kt, 'se une al grupo en la interfaz concreta')
+ok('MulticastLock' in radio_kt, 'pide el bloqueo de multicast (pantalla apagada)')
+ok('status =' in radio_kt, 'guarda un resumen del estado para enseñarlo')
+ok('WalkieLog.i("Radio wifi' in radio_kt, 'deja la radio en el registro')
+lan_svc2 = open('android/app/src/main/java/com/walkielagos/app/LanService.kt').read()
+ok('Event.PeerCount' in lan_svc2, 'la cuenta de la wifi llega a la pantalla')
+ok('Event.Status' in lan_svc2, 'el estado de la radio llega a la pantalla')
+main2 = open('android/app/src/main/java/com/walkielagos/app/MainActivity.kt').read()
+ok('if (!lanMode && !connected)' in main2, 'en wifi se puede hablar sin esperar al servidor')
+ok(main2.index('LanService.listener =') < main2.index('startForegroundService(intent)'),
+   'la pantalla escucha al servicio antes de arrancarlo')
+ok('getUriForFile' in main2 and 'getOrNull()' in main2, 'enviar el registro no puede cerrar la app')
+paths = open('android/app/src/main/res/xml/file_paths.xml').read()
+ok('external-path' in paths, 'el archivo de Descargas se puede enviar')
+
 print("\nREGISTRO DE FALLOS (para saber por qué se cierra)")
 # Regla sencilla que evita un error que ya rompió la compilación: dentro de un
 # bloque apply de un botón, Toast.makeText(this, ...) apunta al botón, no a la pantalla.
@@ -212,7 +231,7 @@ ok('assembleRelease' in wf3 and 'walkie-lagos-diagnostico.apk' in wf3, 'se publi
 ok('keystore.b64' in wf3, 'los dos van firmados con la misma clave')
 ok(os.path.exists('scripts/keystore.b64'), 'la clave está en el repositorio (APK actualizables)')
 gradle2 = open('android/app/build.gradle.kts').read()
-ok('versionCode = 3' in gradle2, 'la versión sube para poder instalar encima')
+ok('versionCode = 4' in gradle2, 'la versión sube para poder instalar encima')
 
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)
