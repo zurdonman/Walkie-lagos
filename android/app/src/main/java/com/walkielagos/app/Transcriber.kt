@@ -89,11 +89,12 @@ class Transcriber(private val context: Context) {
                 val model = model ?: return@execute
                 val recognizer = Recognizer(model, Pcm.SAMPLE_RATE.toFloat())
                 try {
-                    val chunk = 320 * 2
+                    // Vosk acepta tramos de un segundo como máximo.
+                    val chunk = Pcm.SAMPLE_RATE * 2
                     var offset = 0
                     while (offset < pcm.size) {
                         val size = minOf(chunk, pcm.size - offset)
-                        recognizer.acceptWaveForm(pcm, offset, size)
+                        recognizer.acceptWaveForm(pcm.copyOfRange(offset, offset + size), size)
                         offset += size
                     }
                     val text = clean(extractText(recognizer.finalResult))
