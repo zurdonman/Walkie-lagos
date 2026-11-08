@@ -65,7 +65,9 @@ class LanService : Service(), LanRadio.Listener {
 
     override fun onCreate() {
         super.onCreate()
+        WalkieLog.i("Servicio wifi: arrancando")
         store = HistoryStore(this)
+        WalkieLog.i("Servicio wifi: historial listo")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -94,6 +96,7 @@ class LanService : Service(), LanRadio.Listener {
                 sender = created
                 currentRoom = room
                 transcriber = Transcriber(this).also { it.installIfBundled() }
+                WalkieLog.i("Servicio wifi: canal ${Lan.ROOMS.getOrElse(room) { "?" }}, nombre $name")
                 startAudio()
                 created.start()
             }
@@ -213,6 +216,7 @@ class LanService : Service(), LanRadio.Listener {
     }
 
     override fun onError(message: String) {
+        WalkieLog.w("Radio wifi: $message")
         listener?.invoke(Event.Failure(message))
     }
 

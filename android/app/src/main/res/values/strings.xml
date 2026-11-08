@@ -9,6 +9,7 @@
     <string name="default_room">general</string>
     <string name="enter">Entrar</string>
     <string name="leave">Salir</string>
+    <string name="log_button">Registro</string>
     <string name="send">Enviar</string>
     <string name="chat_hint">Mensaje al canal…</string>
     <string name="push_to_talk">MANTÉN\nPARA HABLAR</string>

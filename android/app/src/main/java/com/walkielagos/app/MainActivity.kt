@@ -49,11 +49,16 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WalkieLog.start(this)
+        WalkieLog.i("Abriendo la app (modo guardado: ${if (prefs.getString("mode", "server") == "wifi") "wifi" else "servidor"})")
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
         binding.chatList.adapter = chat
-        store = HistoryStore(this)
+        store = runCatching { HistoryStore(this) }.getOrElse {
+            WalkieLog.e("No se pudo abrir el historial", it)
+            HistoryStore(this)
+        }
 
         prefs.getString("name", null)?.let { binding.nameField.setText(it) }
         prefs.getString("server", null)?.let { binding.serverField.setText(it) }
@@ -73,7 +78,8 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
         paintMode()
 
-        binding.enterButton.setOnClickListener { enter() }
+        binding.enterButton.setOnClickListener { safe("Entrar") { enter() } }
+        binding.logButton.setOnClickListener { showLogMenu() }
         binding.leaveButton.setOnClickListener { leave() }
         binding.ptt.setOnTouchListener { _, event -> onPushToTalk(event) }
         binding.sendButton.setOnClickListener { sendChat() }
@@ -84,6 +90,59 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             } else {
                 false
             }
+        }
+    }
+
+    /** Enseña dónde está el registro y deja compartirlo o borrarlo. */
+    private fun showLogMenu() {
+        val txt = File(WalkieLog.downloadDir(), "walkie-log.txt")
+        val crash = File(WalkieLog.downloadDir(), "walkie-crash.txt")
+        val visible = txt.exists()
+        val donde = if (visible) {
+            "Carpeta: Descargas/log walkie"
+        } else {
+            "No se pudo escribir en Descargas; se guarda dentro de la app\n(carpeta privada). Usa «Compartir»."
+        }
+        val message = if (crash.exists()) {
+            "$donde\n\nHay un informe de fallo: walkie-crash.txt"
+        } else {
+            "$donde\n\nSe está guardando todo lo que hace la app."
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Registro de la app")
+            .setMessage(message)
+            .setPositiveButton("Compartir") { _, _ ->
+                val ctx = this
+                runCatching { WalkieLog.exportToDownloads(ctx) }
+                val target = when {
+                    File(WalkieLog.downloadDir(), "walkie-crash.txt").exists() -> File(WalkieLog.downloadDir(), "walkie-crash.txt")
+                    File(WalkieLog.downloadDir(), "walkie-log.txt").exists() -> File(WalkieLog.downloadDir(), "walkie-log.txt")
+                    File(WalkieLog.privateDir(ctx), "walkie-crash.txt").exists() -> File(WalkieLog.privateDir(ctx), "walkie-crash.txt")
+                    else -> File(WalkieLog.privateDir(ctx), "walkie-log.txt")
+                }
+                if (!target.exists()) {
+                    toast("Todavía no hay registro")
+                } else {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_STREAM, androidx.core.content.FileProvider.getUriForFile(ctx, "${packageName}.files", target))
+                        putExtra(Intent.EXTRA_SUBJECT, "Registro Walkie Lagos")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(send, "Enviar el registro"))
+                }
+            }
+            .setNegativeButton("Cerrar", null)
+            .show()
+    }
+
+    /** Ejecuta algo de la pantalla sin que un fallo cierre la app. */
+    private inline fun safe(what: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (error: Throwable) {
+            WalkieLog.e("Fallo en $what", error)
+            toast("Fallo en $what. Está en el registro.")
         }
     }
 

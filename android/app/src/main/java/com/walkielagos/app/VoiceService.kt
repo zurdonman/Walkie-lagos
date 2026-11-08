@@ -95,6 +95,7 @@ class VoiceService : Service(), VoiceClient.Listener {
                         pin = extra.getStringExtra(EXTRA_PIN).orEmpty(),
                         room = extra.getStringExtra(EXTRA_ROOM).orEmpty(),
                     )
+                    WalkieLog.i("Servicio servidor: conectando a $server como ${newSettings.name}")
                     startAudio()
                     myName = newSettings.name
                     transcriber = Transcriber(this).also { it.installIfBundled() }

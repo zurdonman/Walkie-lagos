@@ -8,6 +8,7 @@ audio, los textos/ids del layout y la lógica de direcciones del servidor.
 """
 import re
 import sys
+import os
 
 fail = []
 def ok(cond, msg):
@@ -160,6 +161,29 @@ ok('ownPcm' in lan_svc and 'ownPcm' in voice_svc, 'se acumula lo que dice el hab
 ok('installIfBundled' in tr and 'executor.execute' in tr.split('installIfBundled')[1][:800],
    'la copia del modelo no bloquea la pantalla')
 ok('if (!installed()) return false' in tr, 'mientras se copia, no se da por roto')
+
+print("\nREGISTRO DE FALLOS (para saber por qué se cierra)")
+log_kt = open('android/app/src/main/java/com/walkielagos/app/WalkieLog.kt').read()
+ok('Download' in log_kt and 'log walkie' in log_kt, 'el registro va a Descargas/log walkie')
+ok('UncaughtExceptionHandler' in log_kt or 'setDefaultUncaughtExceptionHandler' in log_kt, 'captura el fallo que cierra la app')
+ok('walkie-crash.txt' in log_kt, 'deja el informe de fallo en walkie-crash.txt')
+ok('privateDir' in log_kt and 'canWrite' in log_kt, 'si no puede en Descargas, guarda dentro de la app')
+man = open('android/app/src/main/AndroidManifest.xml').read()
+ok('FileProvider' in man and 'file_paths' in man, 'la app puede enviar el archivo del registro')
+ok('WRITE_EXTERNAL_STORAGE' in man and 'maxSdkVersion="28"' in man, 'permiso de escritura solo donde hace falta')
+ok('.LanService' in man, 'el servicio wifi está declarado (sin esto se cierra al entrar)')
+layout = open('android/app/src/main/res/layout/activity_main.xml').read()
+ok('@+id/logButton' in layout, 'botón «Registro» en la pantalla')
+main_kt = open('android/app/src/main/java/com/walkielagos/app/MainActivity.kt').read()
+ok('WalkieLog.start(this)' in main_kt, 'el registro arranca al abrir la app')
+ok(main_kt.index('WalkieLog.start(this)') < main_kt.index('ActivityMainBinding.inflate'), 'antes de dibujar la pantalla')
+ok('safe("Entrar")' in main_kt, 'un fallo al entrar no cierra la app')
+wf3 = open('.github/workflows/build-apk.yml').read()
+ok('assembleRelease' in wf3 and 'walkie-lagos-diagnostico.apk' in wf3, 'se publican el APK normal y el de diagnóstico')
+ok('keystore.b64' in wf3, 'los dos van firmados con la misma clave')
+ok(os.path.exists('scripts/keystore.b64'), 'la clave está en el repositorio (APK actualizables)')
+gradle2 = open('android/app/build.gradle.kts').read()
+ok('versionCode = 2' in gradle2, 'la versión sube para poder instalar encima')
 
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)

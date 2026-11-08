@@ -55,27 +55,44 @@ jobs:
             echo "::warning title=Transcripción::no se pudo descargar el modelo; el APK se compila sin transcripción"
           fi
 
+      - name: Clave de firma (para que los dos APK instalen uno encima del otro)
+        run: |
+          mkdir -p "$HOME/.walkie"
+          base64 -d scripts/keystore.b64 > "$HOME/.walkie/walkie.p12"
+          ls -l "$HOME/.walkie/walkie.p12"
+
       - name: Compilar
         working-directory: android
-        run: gradle :app:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee /tmp/build.log
+        run: |
+          gradle :app:assembleRelease :app:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee /tmp/build.log
+          ls -lh app/build/outputs/apk/release app/build/outputs/apk/debug
         shell: bash
 
-      - name: Nombre del archivo
+      - name: Nombre de los archivos
         run: |
           mkdir -p artifacts
-          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/walkie-lagos.apk
-          ls -lh artifacts/walkie-lagos.apk
+          cp android/app/build/outputs/apk/release/app-release.apk artifacts/walkie-lagos.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/walkie-lagos-diagnostico.apk
+          ls -lh artifacts/
+
+      - name: Verificar la firma
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | tail -1)apksigner
+          for f in artifacts/walkie-lagos.apk artifacts/walkie-lagos-diagnostico.apk; do
+            "$APKSIGNER" verify --print-certs "$f" | head -3
+            echo "::notice title=Firma::$(basename "$f") firmado con la misma clave"
+          done
 
       - name: Verificar el APK
         run: |
           AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | tail -1)aapt2
-          "$AAPT" dump badging android/app/build/outputs/apk/debug/app-debug.apk > /tmp/badging.txt || true
+          "$AAPT" dump badging artifacts/walkie-lagos.apk > /tmp/badging.txt || true
           for key in "package:" "targetSdkVersion" "application-label" "uses-permission: name='android.permission.RECORD_AUDIO'" "launchable-activity"; do
             line=$(grep -m1 "$key" /tmp/badging.txt || echo "NO ENCONTRADO: $key")
             echo "::notice title=APK::${line}"
             case "$line" in NO\ ENCONTRADO*) echo "::warning title=APK::${line}" ;; esac
           done
-          "$AAPT" dump permissions android/app/build/outputs/apk/debug/app-debug.apk >> /tmp/badging.txt
+          "$AAPT" dump permissions artifacts/walkie-lagos.apk >> /tmp/badging.txt
           # El modelo de voz tiene que ir dentro, si no la transcripción no existe.
           if unzip -l artifacts/walkie-lagos.apk | grep -q "assets/vosk-es/"; then
             echo "::notice title=Transcripción::modelo de voz incluido en el APK"
@@ -102,7 +119,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: walkie-lagos-apk
-          path: artifacts/walkie-lagos.apk
+          path: |
+            artifacts/walkie-lagos.apk
+            artifacts/walkie-lagos-diagnostico.apk
           if-no-files-found: error
 
       - name: Publicar el APK como Release
@@ -117,6 +136,17 @@ jobs:
             Commit: ${{ github.sha }}
             Rama: ${{ github.ref_name }}
 
-            Descarga el archivo `walkie-lagos.apk`, pásalo al móvil y ábrelo para instalar.
-          files: artifacts/walkie-lagos.apk
+            Dos archivos, ambos instalables y firmados con la misma clave:
+
+            - `walkie-lagos.apk` → **el normal**, para el día a día.
+            - `walkie-lagos-diagnostico.apk` → **el de pruebas**: escribe un registro de lo
+              que hace y de cualquier fallo en `Descargas/log walkie/` (`walkie-log.txt` y,
+              si la app se cierra, `walkie-crash.txt`). Botón **Registro** en la app para
+              verlo y enviarlo.
+
+            Pásalos al móvil y ábrelos para instalar. Si ya tienes una versión anterior,
+            se actualiza encima sin perder nada.
+          files: |
+            artifacts/walkie-lagos.apk
+            artifacts/walkie-lagos-diagnostico.apk
           make_latest: true
