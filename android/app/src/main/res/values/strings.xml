@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Walkie Lagos</string>
+    <string name="subtitle">Radio del restaurante</string>
+    <string name="server_hint">Servidor (IP o dominio)</string>
+    <string name="name_hint">Tu nombre</string>
+    <string name="pin_hint">PIN del restaurante</string>
+    <string name="room_hint">Canal</string>
+    <string name="default_room">general</string>
+    <string name="enter">Entrar</string>
+    <string name="leave">Salir</string>
+    <string name="send">Enviar</string>
+    <string name="chat_hint">Mensaje al canal…</string>
+    <string name="push_to_talk">MANTÉN\nPARA HABLAR</string>
+    <string name="talking">HABLANDO\nsuelta al terminar</string>
+    <string name="listening">ESCUCHANDO\ncanal ocupado</string>
+    <string name="peer_talking">%1$s está hablando…</string>
+    <string name="busy">%1$s está hablando</string>
+    <string name="online">%1$d en línea</string>
+    <string name="connecting">Conectando…</string>
+    <string name="reconnecting">Sin conexión, reintentando…</string>
+    <string name="not_connected">Aún no estás conectado</string>
+    <string name="need_server">Escribe la dirección del servidor</string>
+    <string name="need_name">Escribe tu nombre</string>
+    <string name="bad_server">Dirección no válida. Ejemplo: 192.168.1.50</string>
+    <string name="no_mic">Sin micrófono no se puede hablar, pero el chat funciona igual</string>
+    <string name="login_help">Pide la dirección del servidor y el PIN al encargado. Si el servidor está en la wifi del local, basta con la IP (por ejemplo 192.168.1.50).</string>
+</resources>

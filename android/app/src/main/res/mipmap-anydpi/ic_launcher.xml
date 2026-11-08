@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icono para Android anteriores a 8; la versión adaptativa está en mipmap-anydpi-v26. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/bg" />
+    <item android:drawable="@drawable/ic_launcher_foreground" android:gravity="center" />
+</layer-list>

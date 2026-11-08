@@ -10,6 +10,32 @@ npm start        # http://localhost:3000
 
 PIN por defecto: `lagos` (cámbialo en `config.json`).
 
+## Dos formas de usarlo
+
+- **En el móvil (APK de Android)**, instalado como una app: carpeta [`android/`](android/README.md).
+  Funciona con la pantalla apagada y se oye entre móviles y navegadores, todo en el mismo canal.
+- **En el navegador**, abriendo la dirección del servidor. Sirve para el ordenador de la
+  barra o para probar sin instalar nada.
+
+## El APK de Android
+
+El APK se compila solo en GitHub (no hace falta Android Studio):
+
+1. Sube los cambios al repositorio.
+2. Pestaña **Actions** → **Compilar APK** → ejecución más reciente.
+3. Descarga el artefacto **walkie-lagos-apk** y descomprímelo.
+4. Pasa `walkie-lagos.apk` al móvil y ábrelo. Android pedirá permitir "instalar apps
+   desconocidas" para esa aplicación: es normal, el APK no viene de Play Store.
+
+En `main` además se publica en **Releases** con enlace directo. Para compilarlo en tu
+ordenador: `cd android && gradle :app:assembleDebug`.
+
+En el móvil, la pantalla de entrada pide:
+
+- **Servidor**: la IP del ordenador del local (ej. `192.168.1.50`) o el dominio si lo
+  tienes con HTTPS. Sin puerto, usa el 3000.
+- **Nombre**, **PIN** y **canal**.
+
 ## Cómo se usa
 
 1. Pones tu nombre y el PIN.
@@ -59,6 +85,8 @@ certificado; no hay nada más que configurar en la app.
 - `public/app.js`: coge el micrófono, lo convierte a PCM 16 bits a 16 kHz y lo manda
   en paquetes de 20 ms (unos 32 kB/s hablando). Al recibir, lo reproduce con un colchón
   de 120 ms para aguantar el wifi.
+- `android/`: misma idea en Kotlin, con servicio en primer plano para seguir escuchando
+  con el móvil bloqueado. El protocolo es el mismo, así que APK y web conviven.
 - Nada se guarda en disco: ni audio ni historial. Al reiniciar, se borra el chat.
 
 Detalles que evitan los cuelgues típicos de estas apps: ping/pong cada 20 segundos para
@@ -68,12 +96,15 @@ cuando alguien se desconecta.
 ## Pruebas
 
 ```bash
-npm test
+npm test              # servidor, audio e interfaz web
+npm run check:android  # revisa el proyecto Android (manifiesto, protocolo, textos, ids)
 ```
 
 - `test/protocol.test.mjs`: servidor con tres clientes (hablar, turno ocupado, chat, canales).
 - `test/audio.test.mjs`: captura de audio por los dos caminos (AudioWorklet y el plan B).
 - `test/ui.test.mjs`: la interfaz completa sin navegador.
+- `scripts/check-android.py`: el proyecto Android revisado contra el servidor real
+  (mensajes del protocolo, permisos, paquetes de audio, textos e ids del layout).
 
 ## Límites, sin adornos
 

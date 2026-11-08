@@ -1,0 +1,54 @@
+name: Compilar APK
+
+# Genera el APK de Android en cada push. No hace falta Android Studio:
+# GitHub lo compila y lo deja descargable en la pestaña Actions / Releases.
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-apk.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    name: APK de depuración
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar
+        working-directory: android
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Nombre del archivo
+        run: |
+          mkdir -p artifacts
+          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/walkie-lagos.apk
+          ls -lh artifacts/walkie-lagos.apk
+
+      - name: Guardar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: walkie-lagos-apk
+          path: artifacts/walkie-lagos.apk
+          if-no-files-found: error
+
+      - name: Publicar en Releases (solo en main)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Walkie Lagos APK ${{ github.run_number }}
+          body: APK generado automáticamente desde el commit ${{ github.sha }}.
+          files: artifacts/walkie-lagos.apk

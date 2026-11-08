@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#101418</color>
+    <color name="text">#EEF2F6</color>
+    <color name="muted">#93A1B1</color>
+    <color name="accent">#F59E0B</color>
+    <color name="ok">#22C55E</color>
+    <color name="ptt_idle">#1E262F</color>
+    <color name="ptt_active">#D97706</color>
+</resources>
