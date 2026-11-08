@@ -80,6 +80,22 @@ marta.releaseTalk();
 await wait(200);
 check(events.b.some((e) => e.type === 'speakerEnd'), 'y que ha terminado');
 
+console.log('\nLO HABLADO SE QUEDA ESCRITO');
+// El hablante transcribe su propia voz y manda el texto: en un restaurante real
+// puede llegar un segundo después, así que el otro móvil debe guardarlo igual.
+marta.sendChat('Mesa cuatro lista.');
+await wait(200);
+check(
+  events.b.some((e) => e.type === 'chat' && e.text === 'Mesa cuatro lista.' && e.from === 'Marta'),
+  'la frase transcrita por quien habló llega a los demás como mensaje',
+);
+luis.sendChat('🎙️ voz de 12 s');
+await wait(200);
+check(
+  events.a.some((e) => e.type === 'chat' && e.text.startsWith('🎙️ voz de')),
+  'si no hay transcripción queda el aviso de voz',
+);
+
 console.log('\nCOLISIÓN: los dos empiezan a hablar a la vez');
 events.a.length = 0;
 events.b.length = 0;

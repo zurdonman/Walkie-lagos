@@ -57,8 +57,11 @@ En el móvil, la pantalla de entrada pide:
 Las opciones son las mínimas:
 
 - **Un turno por canal**: si alguien está hablando, a ti te avisa en vez de cortarle.
-- **45 segundos** máximo por intervención (se cambia en `config.json`).
-- **Chat escrito** al canal, con los últimos 60 mensajes al entrar.
+- **Sin límite de tiempo**: mantienes el botón todo lo que necesites; el reloj solo
+  muestra cuánto llevas hablando.
+- **Chat escrito** al canal, con los últimos mensajes al entrar.
+- **Historial en cada equipo**: lo que se dice por voz se convierte en texto en tu
+  propio móvil y queda guardado ahí (no hay nube de por medio).
 - En el ordenador, la **barra espaciadora** hace de botón.
 
 ## Canales
@@ -68,7 +71,6 @@ En `config.json`:
 ```json
 {
   "pin": "lagos",
-  "maxTalkSeconds": 45,
   "rooms": [
     { "id": "cocina", "name": "Cocina", "emoji": "🍳" },
     { "id": "sala", "name": "Sala", "emoji": "🍽️" }
@@ -92,14 +94,15 @@ certificado; no hay nada más que configurar en la app.
 
 ## Cómo funciona por dentro
 
-- `server.js`: Express + WebSocket. Guárdalo todo en memoria (canales, quién habla,
-  últimos mensajes).
+- `server.js`: Express + WebSocket. Canales y quién habla en memoria; el chat se
+  guarda en `data/history.json` para que no se pierda al reiniciar.
 - `public/app.js`: coge el micrófono, lo convierte a PCM 16 bits a 16 kHz y lo manda
   en paquetes de 20 ms (unos 32 kB/s hablando). Al recibir, lo reproduce con un colchón
   de 120 ms para aguantar el wifi.
 - `android/`: misma idea en Kotlin, con servicio en primer plano para seguir escuchando
   con el móvil bloqueado. El protocolo es el mismo, así que APK y web conviven.
-- Nada se guarda en disco: ni audio ni historial. Al reiniciar, se borra el chat.
+- Nada de audio se guarda. Solo el historial de texto: `data/history.json` en el
+  servidor y una base de datos pequeña en cada móvil (o `localStorage` en la web).
 
 Detalles que evitan los cuelgues típicos de estas apps: ping/pong cada 20 segundos para
 tirar conexiones muertas, reconexión automática al volver el wifi, y liberar el turno
@@ -122,7 +125,9 @@ npm run check:android  # revisa el proyecto Android (manifiesto, protocolo, text
 
 - Un servidor y nada de cuentas: el PIN es la única puerta.
 - Audio cifrado en tránsito si sirves por HTTPS, pero no de extremo a extremo.
-- No hay grabaciones, ni historial de audio, ni llamadas, ni avisos especiales: solo
-  canales, voz y chat.
+- No hay grabaciones ni historial de audio, ni llamadas, ni avisos especiales: solo
+  canales, voz, chat y la transcripción de lo hablado.
+- La transcripción es **local** (Vosk, modelo español dentro del APK): puede fallar con
+  ruido de cocina o acentos fuertes; en ese caso se queda el aviso de voz y ya está.
 
 Licencia MIT.

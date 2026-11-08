@@ -35,7 +35,7 @@
     talking: false,
     wantsTalk: false,
     peer: null,
-    maxSeconds: 45,
+    maxSeconds: 0,
   };
 
   // ------------------------------------------------------------------ avisos
@@ -367,7 +367,7 @@
         state.joined = true;
         state.room = msg.you.room;
         state.rooms = msg.rooms || [];
-        state.maxSeconds = msg.maxTalkSeconds || 45;
+        state.maxSeconds = msg.maxTalkSeconds || 0;
         store.set("room", state.room);
         $("login").hidden = true;
         $("app").hidden = false;
@@ -413,7 +413,7 @@
         }
         state.talking = true;
         state.startedAt = Date.now();
-        state.maxSeconds = msg.maxSeconds || state.maxSeconds;
+        state.maxSeconds = msg.maxSeconds || 0;
         renderPtt();
         break;
 
@@ -441,7 +441,7 @@
         break;
 
       case "chat":
-        addLog(msg.from, msg.text, msg.ts);
+        addLog(msg.from, msg.text, msg.ts, true);
         if (msg.from !== state.name && document.hidden && navigator.vibrate)
           navigator.vibrate(20);
         break;
@@ -613,12 +613,48 @@
     }
   }
 
-  function drawLog(entries) {
-    $("log").innerHTML = "";
-    for (const entry of entries) addLog(entry.from, entry.text, entry.ts);
+  // ------------------------------------------- historial guardado en este equipo
+  // Cada navegador guarda lo suyo: así el chat sigue ahí aunque se recargue o se
+  // caiga la wifi, sin depender de lo que recuerde el servidor.
+  // store ya añade el prefijo "walkie.", así que la clave real es walkie.log
+  const LOG_KEY = "log";
+  let localLog = [];
+  let localLogRoom = "";
+
+  function loadLocalLog(room) {
+    if (room !== localLogRoom) {
+      localLogRoom = room;
+      const all = store.get(LOG_KEY, {}) || {};
+      localLog = Array.isArray(all[room]) ? all[room] : [];
+    }
+    return localLog;
   }
 
-  function addLog(who, text, ts) {
+  function saveLocalLog(entry) {
+    if (!localLogRoom) return;
+    localLog.push(entry);
+    if (localLog.length > 200) localLog = localLog.slice(-200);
+    try {
+      const all = store.get(LOG_KEY, {}) || {};
+      all[localLogRoom] = localLog;
+      store.set(LOG_KEY, all);
+    } catch {}
+  }
+
+  function drawLog(entries) {
+    const local = loadLocalLog(localLogRoom || state.room);
+    $("log").innerHTML = "";
+    if (local.length) {
+      // lo guardado en este equipo manda (incluye voces transcritas)
+      for (const entry of local) addLog(entry.from, entry.text, entry.ts);
+      return;
+    }
+    // Primera vez en este equipo: se copia lo que recuerda el servidor.
+    for (const entry of entries) addLog(entry.from, entry.text, entry.ts, true);
+  }
+
+  function addLog(who, text, ts, remember) {
+    if (remember && who) saveLocalLog({ from: who, text, ts: ts || Date.now() });
     const log = $("log");
     const row = document.createElement("div");
     const time = new Date(ts || Date.now()).toLocaleTimeString("es-ES", {

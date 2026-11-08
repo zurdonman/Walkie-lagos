@@ -13,8 +13,24 @@ En la pantalla de entrada se elige:
 | Internet | no | sí (o red local con el servidor) |
 | Dirección y PIN | no | sí |
 | Alcance | los móviles de esa wifi | cualquiera con la dirección, aunque esté fuera |
-| Historial de chat | no (solo en directo) | sí, últimos 60 mensajes |
+| Historial de chat | sí, guardado **en cada móvil** (500 mensajes por canal) | igual, más la copia del servidor |
 | Canales | General, Cocina, Sala, Barra | los que tenga `config.json` |
+| Lo hablado | transcrito en el propio móvil y guardado | igual |
+
+## Transcripción (lo hablado queda escrito)
+
+Cuando alguien suelta el botón, el móvil **de quien habló** no hace nada especial: cada
+móvil que lo escuchó pasa ese audio por **Vosk** (reconocimiento de voz **offline**,
+modelo español pequeño) y añade el texto a su historial con el nombre de quien habló,
+como un mensaje más del chat.
+
+- El modelo (`vosk-model-small-es-0.42`, unos 40 MB) se descarga **al compilar** y va
+  dentro del APK (por eso el APK pasa de 6 MB a ~61 MB). Al primer arranque se copia a
+  la carpeta privada de la app.
+- No sale nada a internet: la transcripción ocurre en el teléfono, sin cuenta ni nube.
+- Si el modelo no está, la app sigue igual, solo sin transcripción.
+- Con ruido de cocina puede equivocarse o no entender nada; en ese caso simplemente no
+  aparece el mensaje de voz.
 
 En **solo wifi** los móviles se hablan directamente por **multicast UDP**
 (`239.255.43.43:45454`): el router es el único "host" y no hay nada que instalar ni
@@ -25,8 +41,8 @@ Lo que **no** puede hacer el modo sin servidor:
 
 - **Cruzar redes**: si el móvil se va a datos móviles u otra wifi, deja de oír. El
   multicast no sale del router.
-- **Guardar el chat**: no hay memoria compartida; si abres la app a mitad de servicio,
-  no ves lo de antes.
+- **Compartir el historial entre móviles**: cada uno guarda el suyo; si entras a mitad
+  de servicio ves lo que ya se dijo desde que instalaste la app, no antes.
 - **Funcionar con el ahorro de batería agresivo** en algunos móviles (Xiaomi, Huawei):
   hay que permitir que la app siga en segundo plano.
 - Si el router tiene **aislamiento de clientes (AP isolation)** activado, los móviles no

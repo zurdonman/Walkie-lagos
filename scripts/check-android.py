@@ -149,5 +149,12 @@ srv = open('server.js').read()
 ok('saveHistory' in srv and 'writeHistoryNow' in srv, 'el servidor guarda el historial en disco')
 ok('maxTalkSeconds: 0' in srv or 'MAX_TALK_MS = Math.max(0' in srv, 'sin límite de tiempo al hablar')
 
+lan_svc = open('android/app/src/main/java/com/walkielagos/app/LanService.kt').read()
+voice_svc = open('android/app/src/main/java/com/walkielagos/app/VoiceService.kt').read()
+ok('sendChat(text)' in lan_svc and 'sendChat(text)' in voice_svc,
+   'quien habla transcribe y manda el texto a los demás')
+ok('AUDIO_NOTE' in lan_svc, 'si no hay transcripción queda el aviso de voz')
+ok('ownPcm' in lan_svc and 'ownPcm' in voice_svc, 'se acumula lo que dice el hablante')
+
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)

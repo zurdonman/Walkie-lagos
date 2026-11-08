@@ -27,6 +27,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class LanService : Service(), LanRadio.Listener {
 
     companion object {
+        /** Si no hay transcripción, al menos queda constancia de que hubo voz. */
+        const val AUDIO_NOTE = "🎙️ voz de %d s"
         const val ACTION_START = "com.walkielagos.app.LAN_START"
         const val ACTION_STOP = "com.walkielagos.app.LAN_STOP"
         const val ACTION_TALK = "com.walkielagos.app.LAN_TALK"
@@ -78,6 +80,7 @@ class LanService : Service(), LanRadio.Listener {
                 val name = intent?.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { "Móvil" }
                 val room = intent?.getIntExtra(EXTRA_ROOM, 0) ?: 0
                 val nodeId = intent?.getStringExtra(EXTRA_NODE_ID)
+                myName = name
                 startForegroundNotification(Lan.ROOMS.getOrElse(room) { "General" })
 
                 val created = LanRadio(
@@ -118,6 +121,35 @@ class LanService : Service(), LanRadio.Listener {
         if (on == speaking) return
         speaking = on
         radio?.setTalking(on)
+        if (on) {
+            ownPcm.reset()
+        } else {
+            // Al soltar el botón, lo que he dicho se escribe y se manda a los demás
+            // para que todos lo tengan en su historial.
+            val pcm = ownPcm.toByteArray()
+            ownPcm.reset()
+            if (pcm.isNotEmpty()) transcribeAndBroadcast(pcm)
+        }
+    }
+
+    private fun transcribeAndBroadcast(pcm: ByteArray) {
+        val engine = transcriber
+        if (engine == null) {
+            radio?.sendChat(AUDIO_NOTE.format(pcm.size / (Lan.SAMPLE_RATE * 2)))
+            return
+        }
+        engine.transcribe(
+            currentRoom,
+            myName.ifBlank { "Móvil" },
+            pcm,
+            object : Transcriber.Listener {
+                override fun onTranscribed(roomIndex: Int, speaker: String, text: String) {
+                    store.add(Lan.ROOMS.getOrElse(roomIndex) { "General" }, speaker, text, true)
+                    listener?.invoke(Event.Chat(ChatEntry(speaker, text, System.currentTimeMillis(), true)))
+                    radio?.sendChat(text)
+                }
+            },
+        )
     }
 
     // ------------------------------------------------------------ LanRadio.Listener
@@ -134,6 +166,8 @@ class LanService : Service(), LanRadio.Listener {
 
     private var currentSpeaker = ""
     private var currentRoom = 0
+    private var myName = ""
+    private val ownPcm = java.io.ByteArrayOutputStream()
 
     override fun onPeerSpeaking(from: String) {
         currentSpeaker = from
@@ -237,6 +271,7 @@ class LanService : Service(), LanRadio.Listener {
                     payload[1] = ((sequence shr 8) and 0xFF).toByte()
                     bytes.copyInto(payload, 2)
                     radio?.sendAudio(payload)
+                    if (ownPcm.size() < 120 * Lan.SAMPLE_RATE * 2) ownPcm.write(bytes, 0, bytes.size)
                 }
             }
         }.apply { isDaemon = true }.also { it.start() }

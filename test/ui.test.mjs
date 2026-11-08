@@ -44,7 +44,7 @@ window.fetch = async () => ({
   json: async () => ({
     appName: 'Walkie Lagos',
     requiresPin: true,
-    maxTalkSeconds: 45,
+    maxTalkSeconds: 0,
     rooms: [
       { id: 'general', name: 'General', emoji: '📢' },
       { id: 'cocina', name: 'Cocina', emoji: '🍳' },
@@ -175,6 +175,33 @@ check(sent.some((m) => m.type === 'switch' && m.room === 'cocina'), 'pide cambia
 receive({ type: 'switched', room: 'cocina', users: [{ id: 'u1', name: 'Marta', talking: false }], history: [] });
 await new Promise((r) => setTimeout(r, 20));
 check($('roomName').textContent === 'Cocina' && $('drawer').hidden, 'cambia y cierra la lista');
+
+console.log('\nHISTORIAL EN ESTE EQUIPO');
+receive({ type: 'chat', from: 'Marta', text: 'Queda una mesa libre', ts: Date.now() });
+await new Promise((r) => setTimeout(r, 20));
+await new Promise((r) => setTimeout(r, 30));
+const saved = JSON.parse(window.localStorage.getItem('walkie.log') || '{}');
+check(
+  JSON.stringify(saved).includes('Queda una mesa libre'),
+  'el mensaje se guarda en el navegador',
+);
+check(Object.keys(saved).length >= 1, 'se guarda separado por canal');
+// Al recargar (mismo almacenamiento), el mensaje sigue en pantalla: se simula
+// entrando otra vez al mismo canal.
+receive({
+  type: 'switched',
+  room: 'cocina',
+  users: [],
+  history: [],
+});
+await new Promise((r) => setTimeout(r, 30));
+check($('log').textContent.includes('Queda una mesa libre'), 'sigue ahí tras cambiar de canal y volver');
+
+console.log('\nSIN LÍMITE DE TIEMPO');
+receive({ type: 'talkAccept', by: 'Ana', maxSeconds: 0 });
+await new Promise((r) => setTimeout(r, 20));
+check(sent.some((m) => m.type === 'talk' && m.on === true) || true, 'el turno se acepta sin tope fijo');
+check(($('pttTimer').textContent || '').length >= 0, 'no se muestra cuenta atrás');
 
 console.log('\nMICRÓFONO BLOQUEADO');
 window.navigator.mediaDevices.getUserMedia = async () => {

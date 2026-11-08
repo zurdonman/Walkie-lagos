@@ -54,6 +54,8 @@ class VoiceService : Service(), VoiceClient.Listener {
     private var transcriber: Transcriber? = null
     private var roomName = ""
     private val speakingPcm = java.io.ByteArrayOutputStream()
+    private val ownPcm = java.io.ByteArrayOutputStream()
+    private var myName = ""
 
     private var record: AudioRecord? = null
     private var track: AudioTrack? = null
@@ -94,6 +96,7 @@ class VoiceService : Service(), VoiceClient.Listener {
                         room = extra.getStringExtra(EXTRA_ROOM).orEmpty(),
                     )
                     startAudio()
+                    myName = newSettings.name
                     transcriber = Transcriber(this).also { it.installIfBundled() }
                     client = VoiceClient(newSettings, this).also { it.connect() }
                     VoiceServiceBus.sender = { text -> client?.sendChat(text) ?: false }
@@ -197,7 +200,36 @@ class VoiceService : Service(), VoiceClient.Listener {
     private fun setTalking(on: Boolean) {
         if (on == speaking) return
         speaking = on
-        if (on) client?.requestTalk() else client?.releaseTalk()
+        if (on) {
+            ownPcm.reset()
+            client?.requestTalk()
+        } else {
+            client?.releaseTalk()
+            // Lo que acabo de decir se escribe en mi móvil y se manda al canal.
+            val pcm = ownPcm.toByteArray()
+            ownPcm.reset()
+            if (pcm.isNotEmpty()) transcribeAndBroadcast(pcm)
+        }
+    }
+
+    private fun transcribeAndBroadcast(pcm: ByteArray) {
+        val engine = transcriber
+        if (engine == null) {
+            client?.sendChat(LanService.AUDIO_NOTE.format(pcm.size / (16_000 * 2)))
+            return
+        }
+        engine.transcribe(
+            0,
+            myName.ifBlank { "Móvil" },
+            pcm,
+            object : Transcriber.Listener {
+                override fun onTranscribed(roomIndex: Int, speaker: String, text: String) {
+                    store.add(roomName.ifEmpty { "General" }, speaker, text, true)
+                    listener?.invoke(Event.Chat(ChatEntry(speaker, text, System.currentTimeMillis(), true)))
+                    client?.sendChat(text)
+                }
+            },
+        )
     }
 
     private fun startAudio() {
@@ -251,6 +283,8 @@ class VoiceService : Service(), VoiceClient.Listener {
                     for (packet in Pcm.packetize(samples)) {
                         client?.sendAudio(packet, Pcm.level(samples))
                     }
+                    val bytes = Pcm.pack(samples)
+                    if (ownPcm.size() < 120 * 16_000 * 2) ownPcm.write(bytes, 0, bytes.size)
                 }
             }
         }.apply { isDaemon = true }.also { it.start() }
