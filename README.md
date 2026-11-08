@@ -10,6 +10,17 @@ npm start        # http://localhost:3000
 
 PIN por defecto: `lagos` (cámbialo en `config.json`).
 
+## Sin servidor (solo la wifi del local)
+
+En la app Android se elige **"Solo wifi"**: los móviles se hablan directamente entre ellos
+por multicast, sin servidor, sin internet y sin configurar nada. El router es el único
+"host". No hay historial de chat ni cruza a otras redes; el resto funciona igual (canales,
+turno de palabra, texto).
+
+El protocolo está especificado en `lan/protocol.mjs` (paquete binario `WLK1`, grupo
+`239.255.43.43:45454`) e implementado en Kotlin en `android/.../LanPacket.kt`. Se prueba de
+verdad con dos nodos por multicast: `node test/lan.test.mjs`.
+
 ## Dos formas de usarlo
 
 - **En el móvil (APK de Android)**, instalado como una app: carpeta [`android/`](android/README.md).
@@ -97,7 +108,7 @@ cuando alguien se desconecta.
 ## Pruebas
 
 ```bash
-npm test              # servidor, audio e interfaz web
+npm test              # servidor, radio wifi, audio e interfaz web
 npm run check:android  # revisa el proyecto Android (manifiesto, protocolo, textos, ids)
 ```
 

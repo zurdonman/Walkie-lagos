@@ -3,6 +3,35 @@
 App nativa (Kotlin, sin frameworks) que habla con el mismo servidor que la versión web:
 los que usen el APK y los que usen el navegador se oyen entre sí en el mismo canal.
 
+## Dos modos
+
+En la pantalla de entrada se elige:
+
+| | **Solo wifi** (sin servidor) | **Con servidor** |
+| --- | --- | --- |
+| Qué hace falta | la wifi del local y ya | un ordenador/servidor en la red |
+| Internet | no | sí (o red local con el servidor) |
+| Dirección y PIN | no | sí |
+| Alcance | los móviles de esa wifi | cualquiera con la dirección, aunque esté fuera |
+| Historial de chat | no (solo en directo) | sí, últimos 60 mensajes |
+| Canales | General, Cocina, Sala, Barra | los que tenga `config.json` |
+
+En **solo wifi** los móviles se hablan directamente por **multicast UDP**
+(`239.255.43.43:45454`): el router es el único "host" y no hay nada que instalar ni
+configurar. Cada móvil tiene su **nodeId** aleatorio de 8 bytes que viaja en cada
+paquete, así que se reconocen entre ellos y descartan sus propios paquetes.
+
+Lo que **no** puede hacer el modo sin servidor:
+
+- **Cruzar redes**: si el móvil se va a datos móviles u otra wifi, deja de oír. El
+  multicast no sale del router.
+- **Guardar el chat**: no hay memoria compartida; si abres la app a mitad de servicio,
+  no ves lo de antes.
+- **Funcionar con el ahorro de batería agresivo** en algunos móviles (Xiaomi, Huawei):
+  hay que permitir que la app siga en segundo plano.
+- Si el router tiene **aislamiento de clientes (AP isolation)** activado, los móviles no
+  se ven entre sí. Es un ajuste del router, no de la app.
+
 ## Qué hace
 
 - Escucha y habla con la **pantalla apagada** o la app en segundo plano (servicio en
@@ -66,6 +95,9 @@ app/src/main/java/com/walkielagos/app/
   VoiceClient.kt     WebSocket (OkHttp) y reconexión
   Protocol.kt        mensajes JSON del servidor
   Pcm.kt             remuestreo a 16 kHz y empaquetado en 20 ms
+  LanPacket.kt       formato del paquete de la radio wifi (idéntico a lan/protocol.mjs)
+  LanRadio.kt        sockets multicast, turno de palabra, latidos y canales
+  LanService.kt      servicio en primer plano del modo sin servidor
   ChatAdapter.kt     lista del chat
 ```
 
