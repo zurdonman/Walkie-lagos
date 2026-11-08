@@ -44,7 +44,7 @@ sealed interface Event {
     /** Un trozo de voz del compañero. */
     data class Audio(val bytes: ByteArray) : Event {
         override fun equals(other: Any?) = this === other
-        override fun hashCode() = System.identityHashCode(this)
+        override fun hashCode() = java.lang.System.identityHashCode(this)
     }
 }
 

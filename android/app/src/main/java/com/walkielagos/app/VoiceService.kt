@@ -71,20 +71,22 @@ class VoiceService : Service(), VoiceClient.Listener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_TALK -> setTalking(intent.getBooleanExtra(EXTRA_ON, false))
+            ACTION_TALK -> setTalking(intent?.getBooleanExtra(EXTRA_ON, false) ?: false)
             ACTION_STOP -> {
                 disconnect()
                 stopSelf()
             }
+            null -> Unit
             else -> {
-                val server = intent?.getStringExtra(EXTRA_SERVER).orEmpty()
-                if (server.isNotBlank() && client == null) {
+                val extra = intent
+                val server = extra?.getStringExtra(EXTRA_SERVER).orEmpty()
+                if (server.isNotBlank() && client == null && extra != null) {
                     startForeground(NOTIFICATION_ID, notification("Conectando…"))
                     val newSettings = Settings(
                         server = server,
-                        name = intent.getStringExtra(EXTRA_NAME).orEmpty(),
-                        pin = intent.getStringExtra(EXTRA_PIN).orEmpty(),
-                        room = intent.getStringExtra(EXTRA_ROOM).orEmpty(),
+                        name = extra.getStringExtra(EXTRA_NAME).orEmpty(),
+                        pin = extra.getStringExtra(EXTRA_PIN).orEmpty(),
+                        room = extra.getStringExtra(EXTRA_ROOM).orEmpty(),
                     )
                     startAudio()
                     client = VoiceClient(newSettings, this).also { it.connect() }
@@ -211,7 +213,8 @@ class VoiceService : Service(), VoiceClient.Listener {
 
         playerThread = Thread {
             while (!Thread.currentThread().isInterrupted) {
-                val bytes = inbox.poll() ?: run {
+                val bytes = inbox.poll()
+                if (bytes == null) {
                     SystemClock.sleep(5)
                     continue
                 }
