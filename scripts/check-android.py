@@ -162,6 +162,29 @@ ok('installIfBundled' in tr and 'executor.execute' in tr.split('installIfBundled
    'la copia del modelo no bloquea la pantalla')
 ok('if (!installed()) return false' in tr, 'mientras se copia, no se da por roto')
 
+print("\nLAYOUT: TODO ELEMENTO CON TAMAÑO (si falta, la app se cierra al abrir)")
+# Android exige layout_width y layout_height en cada Vista del XML; un <include> o un
+# <requestFocus> no los llevan. Este fallo ya cerró la app una vez: 65: You must
+# supply a layout_width attribute.
+import xml.etree.ElementTree as ET
+ns = '{http://schemas.android.com/apk/res/android}'
+import glob
+sin_tamano = []
+files = sorted(glob.glob('android/app/src/main/res/layout/*.xml'))
+for path in files:
+  layout_root = ET.parse(path).getroot()
+  for element in layout_root.iter():
+    tag = element.tag.split('.')[-1]
+    if tag in ('include', 'requestFocus', 'merge'):
+        continue
+    for attr in ('layout_width', 'layout_height'):
+        if ns + attr not in element.attrib:
+            sin_tamano.append(f"{path.split('/')[-1]}:{tag}({element.attrib.get(ns + 'id', 'sin id')}).{attr}")
+ok(not sin_tamano, 'todas las vistas llevan layout_width y layout_height' + (f" → {sin_tamano[:4]}" if sin_tamano else ''))
+# El estilo tampoco sirve: el inflador exige el atributo en la propia vista.
+estilos = open('android/app/src/main/res/values/themes.xml').read()
+ok('name="Widget.Walkie.Field"' in estilos, 'el estilo de los campos existe')
+
 print("\nREGISTRO DE FALLOS (para saber por qué se cierra)")
 # Regla sencilla que evita un error que ya rompió la compilación: dentro de un
 # bloque apply de un botón, Toast.makeText(this, ...) apunta al botón, no a la pantalla.
@@ -189,7 +212,7 @@ ok('assembleRelease' in wf3 and 'walkie-lagos-diagnostico.apk' in wf3, 'se publi
 ok('keystore.b64' in wf3, 'los dos van firmados con la misma clave')
 ok(os.path.exists('scripts/keystore.b64'), 'la clave está en el repositorio (APK actualizables)')
 gradle2 = open('android/app/build.gradle.kts').read()
-ok('versionCode = 2' in gradle2, 'la versión sube para poder instalar encima')
+ok('versionCode = 3' in gradle2, 'la versión sube para poder instalar encima')
 
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)
