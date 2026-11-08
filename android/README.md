@@ -7,15 +7,15 @@ los que usen el APK y los que usen el navegador se oyen entre sí en el mismo ca
 
 En la pantalla de entrada se elige:
 
-| | **Solo wifi** (sin servidor) | **Con servidor** |
-| --- | --- | --- |
-| Qué hace falta | la wifi del local y ya | un ordenador/servidor en la red |
-| Internet | no | sí (o red local con el servidor) |
-| Dirección y PIN | no | sí |
-| Alcance | los móviles de esa wifi | cualquiera con la dirección, aunque esté fuera |
-| Historial de chat | sí, guardado **en cada móvil** (500 mensajes por canal) | igual, más la copia del servidor |
-| Canales | General, Cocina, Sala, Barra | los que tenga `config.json` |
-| Lo hablado | transcrito en el propio móvil y guardado | igual |
+| | **Probar** | **Solo wifi** (sin servidor) | **Con servidor** |
+| --- | --- | --- | --- |
+| Qué hace falta | nada | la wifi del local y ya | un ordenador/servidor en la red |
+| Internet | no | no | sí (o red local con el servidor) |
+| Dirección y PIN | no | no | sí |
+| Alcance | solo este móvil (compañero simulado) | los móviles de esa wifi | cualquiera con la dirección, aunque esté fuera |
+| Historial de chat | sí (para probar) | sí, guardado **en cada móvil** (500 mensajes por canal) | igual, más la copia del servidor |
+| Canales | General, Cocina, Comedor, Barra, Terraza y Prueba | General, Cocina, Comedor, Barra, Terraza | los que tenga `config.json` |
+| Lo hablado | se transcribe igual, pero no viaja | transcrito en el propio móvil y guardado | igual |
 
 ## Canales y botón flotante
 
