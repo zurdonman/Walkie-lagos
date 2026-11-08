@@ -66,7 +66,7 @@ class VoiceService : Service(), VoiceClient.Listener {
     @Volatile
     private var speaking = false
     private var floating: FloatingButton? = null
-    private val prefs by lazy { getSharedPreferences(FloatingButton.PREFS, MODE_PRIVATE)
+    private val prefs by lazy { getSharedPreferences(FloatingButton.PREFS, MODE_PRIVATE) }
 
     private val inbox = ConcurrentLinkedQueue<ByteArray>()
     private var nextPlayAtNanos = 0L

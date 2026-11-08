@@ -205,6 +205,15 @@ ok('getUriForFile' in main2 and 'getOrNull()' in main2, 'enviar el registro no p
 paths = open('android/app/src/main/res/xml/file_paths.xml').read()
 ok('external-path' in paths, 'el archivo de Descargas se puede enviar')
 
+print("\nKOTLIN BÁSICO (errores que rompen la compilación)")
+import glob as _glob
+descuadre = []
+for _f in _glob.glob('android/app/src/main/java/com/walkielagos/app/*.kt'):
+    _s = open(_f).read()
+    if _s.count('{') != _s.count('}'):
+        descuadre.append(_f.split('/')[-1])
+ok(not descuadre, 'llaves { } equilibradas en todos los .kt' + (f" → {descuadre}" if descuadre else ''))
+
 print("\nCANALES Y BOTÓN FLOTANTE")
 lan_pkt = open('android/app/src/main/java/com/walkielagos/app/LanPacket.kt').read()
 proto = open('lan/protocol.mjs').read()
