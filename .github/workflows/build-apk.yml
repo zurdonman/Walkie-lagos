@@ -138,7 +138,7 @@ jobs:
           tag_name: apk-${{ github.run_number }}
           name: Walkie Lagos APK ${{ github.run_number }} (${{ github.ref_name }})
           body: |
-            APK de depuración generado automáticamente.
+            Walkie Lagos generado automáticamente (sin coste y sin depender de nada).
 
             Commit: ${{ github.sha }}
             Rama: ${{ github.ref_name }}
