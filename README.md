@@ -76,6 +76,9 @@ Las opciones son las mínimas:
 - **Sin límite de tiempo**: mantienes el botón todo lo que necesites; el reloj solo
   muestra cuánto llevas hablando.
 - **Chat escrito** al canal, con los últimos mensajes al entrar.
+- **Cinco canales** (General, Cocina, Comedor, Barra, Terraza) y se cambia con el botón
+  **Canal** dentro de la app, sin salir; cada canal tiene su voz y su historial.
+- **Botón flotante** (opcional): hablar desde cualquier app sin abrir Walkie Lagos.
 - **Historial en cada equipo**: lo que se dice por voz se convierte en texto en tu
   propio móvil y queda guardado ahí (no hay nube de por medio).
 - En el ordenador, la **barra espaciadora** hace de botón.
@@ -89,7 +92,7 @@ En `config.json`:
   "pin": "lagos",
   "rooms": [
     { "id": "cocina", "name": "Cocina", "emoji": "🍳" },
-    { "id": "sala", "name": "Sala", "emoji": "🍽️" }
+    { "id": "comedor", "name": "Comedor", "emoji": "🍽️" }
   ]
 }
 ```

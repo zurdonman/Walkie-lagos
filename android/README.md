@@ -17,6 +17,17 @@ En la pantalla de entrada se elige:
 | Canales | General, Cocina, Sala, Barra | los que tenga `config.json` |
 | Lo hablado | transcrito en el propio móvil y guardado | igual |
 
+## Canales y botón flotante
+
+- **Canales**: General, Cocina, Comedor, Barra y Terraza (índice en el byte 6 del
+  paquete). El botón **Canal** cambia sin salir de la app; cada canal tiene su audio,
+  su transcripción y su historial en el móvil.
+- **Botón flotante**: activándolo con el botón *Botón flotante*, aparece un 🎙️ encima
+  de cualquier app. Se **mantiene pulsado para hablar** y se suelta para escuchar; un
+  toque corto abre Walkie Lagos; arrastrándolo se cambia de sitio y se recuerda.
+  Android pide una vez el permiso **«mostrar sobre otras apps»**; si no se concede, la
+  app lo explica y no aparece el botón.
+
 ## Dos APK y registro de fallos
 
 Cada Release publica `walkie-lagos.apk` (normal) y `walkie-lagos-diagnostico.apk`
