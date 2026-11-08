@@ -7,8 +7,10 @@ on:
     branches: ['**']
     paths:
       - 'android/**'
+      - 'scripts/keystore.b64'
       - '.github/workflows/build-apk.yml'
   pull_request:
+  # Permite lanzarlo a mano desde la pestaña Actions.
   workflow_dispatch:
 
 # Necesario para publicar el APK como Release (descarga con un clic).
