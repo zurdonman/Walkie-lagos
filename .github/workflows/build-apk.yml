@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -29,13 +29,22 @@ jobs:
 
       - name: Compilar
         working-directory: android
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee /tmp/build.log
+        shell: bash
 
       - name: Nombre del archivo
         run: |
           mkdir -p artifacts
           cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/walkie-lagos.apk
           ls -lh artifacts/walkie-lagos.apk
+
+      - name: Guardar log de compilación
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build.log
+          if-no-files-found: ignore
 
       - name: Guardar APK
         uses: actions/upload-artifact@v4
