@@ -15,14 +15,36 @@ function check(cond, msg) {
   if (!cond) failures += 1;
 }
 
-const server = spawn('node', ['server.js'], {
-  env: { ...process.env, PORT: String(PORT) },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-let log = '';
-server.stdout.on('data', (d) => (log += d));
-server.stderr.on('data', (d) => (log += d));
-for (let i = 0; i < 60 && !log.includes('PIN:'); i++) await wait(100);
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'walkie-data-'));
+let server;
+
+function startServer() {
+  const child = spawn('node', ['server.js'], {
+    env: { ...process.env, PORT: String(PORT), DATA_DIR },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let log = '';
+  child.stdout.on('data', (d) => (log += d));
+  child.stderr.on('data', (d) => (log += d));
+  return child;
+}
+
+async function waitForServer(child) {
+  let log = '';
+  child.stdout.on('data', (d) => (log += d));
+  for (let i = 0; i < 80; i++) {
+    await wait(100);
+    if (log.includes('PIN:')) return;
+  }
+  throw new Error('el servidor no arranca');
+}
+
+server = startServer();
+await waitForServer(server);
 
 function join(name, room, pin = 'lagos') {
   return new Promise((resolve, reject) => {
@@ -113,6 +135,25 @@ try {
   await wait(250);
   const finalCfg = await (await fetch(`${BASE}/api/config`)).json();
   check(finalCfg.rooms.every((r) => r.count === 0), 'al irse todos los canales quedan vacíos');
+
+  // El historial debe sobrevivir a un reinicio del servidor.
+  server.kill('SIGTERM');
+  await wait(400);
+  server = startServer();
+  await waitForServer(server);
+  const revived = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'join', name: 'Ana', pin: 'lagos', room: 'cocina' })));
+    ws.on('message', (d) => {
+      const msg = JSON.parse(d.toString());
+      if (msg.type === 'welcome') {
+        ws.close();
+        resolve(msg.history);
+      }
+    });
+    setTimeout(() => reject(new Error('timeout historial')), 4000);
+  });
+  check(revived.some((m) => m.text === 'Mesa 3 lista'), 'el historial sigue ahí tras reiniciar el servidor');
 } catch (error) {
   console.error('\nError:', error);
   failures += 1;

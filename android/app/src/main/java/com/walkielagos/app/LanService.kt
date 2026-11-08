@@ -44,6 +44,9 @@ class LanService : Service(), LanRadio.Listener {
     }
 
     private var radio: LanRadio? = null
+    private lateinit var store: HistoryStore
+    private var transcriber: Transcriber? = null
+    private val speakingPcm = java.io.ByteArrayOutputStream()
     private var record: AudioRecord? = null
     private var track: AudioTrack? = null
     private var recorderThread: Thread? = null
@@ -57,6 +60,11 @@ class LanService : Service(), LanRadio.Listener {
     private var nextPlayAtNanos = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        store = HistoryStore(this)
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -81,6 +89,8 @@ class LanService : Service(), LanRadio.Listener {
                 )
                 radio = created
                 sender = created
+                currentRoom = room
+                transcriber = Transcriber(this).also { it.installIfBundled() }
                 startAudio()
                 created.start()
             }
@@ -95,6 +105,8 @@ class LanService : Service(), LanRadio.Listener {
 
     private fun close() {
         sender = null
+        transcriber?.close()
+        transcriber = null
         setTalking(false)
         radio?.stop()
         radio = null
@@ -113,14 +125,37 @@ class LanService : Service(), LanRadio.Listener {
     override fun onAudio(data: ByteArray) {
         if (inbox.size > 50) inbox.clear()
         inbox.add(data)
+        // Lo que se oye se guarda (los 2 bytes de secuencia fuera) para transcribir.
+        val offset = if (data.size >= 2) 2 else 0
+        if (currentSpeaker.isNotEmpty() && speakingPcm.size() < 60 * Lan.SAMPLE_RATE * 2) {
+            speakingPcm.write(data, offset, data.size - offset)
+        }
     }
 
+    private var currentSpeaker = ""
+    private var currentRoom = 0
+
     override fun onPeerSpeaking(from: String) {
+        currentSpeaker = from
+        speakingPcm.reset()
         listener?.invoke(Event.TalkStart(from))
     }
 
     override fun onPeerSilent(from: String) {
+        val pcm = speakingPcm.toByteArray()
+        speakingPcm.reset()
+        currentSpeaker = ""
+        if (pcm.isNotEmpty()) transcribeAndSave(currentRoom, from, pcm)
         listener?.invoke(Event.TalkEnd(from))
+    }
+
+    /** La voz se convierte en texto en este móvil y se guarda en su historial. */
+    private fun transcribeAndSave(room: Int, from: String, pcm: ByteArray) {
+        val engine = transcriber ?: return
+        engine.transcribe(room, from, pcm) { roomIndex, speaker, text ->
+            store.add(Lan.ROOMS.getOrElse(roomIndex) { "General" }, speaker, text, false)
+            listener?.invoke(Event.Chat(ChatEntry(speaker, text, System.currentTimeMillis(), false)))
+        }
     }
 
     override fun onPeerCount(count: Int) {
@@ -128,6 +163,7 @@ class LanService : Service(), LanRadio.Listener {
     }
 
     override fun onChat(from: String, text: String) {
+        store.add(Lan.ROOMS.getOrElse(currentRoom) { "General" }, from, text, false)
         listener?.invoke(Event.Chat(ChatEntry(from, text, System.currentTimeMillis(), false)))
     }
 

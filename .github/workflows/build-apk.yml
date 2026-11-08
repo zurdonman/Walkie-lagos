@@ -31,6 +31,30 @@ jobs:
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Modelo de voz español (para transcribir sin internet)
+        run: |
+          set -e
+          mkdir -p android/app/src/main/assets
+          # Se prueba el sitio oficial y, si no responde, un espejo de Hugging Face.
+          for URL in \
+            "https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip" \
+            "https://huggingface.co/alphacep/vosk-model-small-es-0.42/resolve/main/vosk-model-small-es-0.42.zip"; do
+            echo "Probando $URL"
+            if curl -fsSL --retry 2 --max-time 300 -o /tmp/vosk.zip "$URL"; then
+              echo "Descargado ($(du -h /tmp/vosk.zip | cut -f1))"
+              break
+            fi
+          done
+          if [ -f /tmp/vosk.zip ]; then
+            unzip -q /tmp/vosk.zip -d /tmp/vosk
+            mkdir -p android/app/src/main/assets/vosk-es
+            cp -r /tmp/vosk/vosk-model-small-es-0.42/* android/app/src/main/assets/vosk-es/
+            du -sh android/app/src/main/assets/vosk-es
+            echo "::notice title=Transcripción::modelo incluido en el APK"
+          else
+            echo "::warning title=Transcripción::no se pudo descargar el modelo; el APK se compila sin transcripción"
+          fi
+
       - name: Compilar
         working-directory: android
         run: gradle :app:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee /tmp/build.log

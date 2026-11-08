@@ -50,6 +50,10 @@ class VoiceService : Service(), VoiceClient.Listener {
     }
 
     private var client: VoiceClient? = null
+    private lateinit var store: HistoryStore
+    private var transcriber: Transcriber? = null
+    private var roomName = ""
+    private val speakingPcm = java.io.ByteArrayOutputStream()
 
     private var record: AudioRecord? = null
     private var track: AudioTrack? = null
@@ -67,6 +71,7 @@ class VoiceService : Service(), VoiceClient.Listener {
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        store = HistoryStore(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -89,6 +94,7 @@ class VoiceService : Service(), VoiceClient.Listener {
                         room = extra.getStringExtra(EXTRA_ROOM).orEmpty(),
                     )
                     startAudio()
+                    transcriber = Transcriber(this).also { it.installIfBundled() }
                     client = VoiceClient(newSettings, this).also { it.connect() }
                     VoiceServiceBus.sender = { text -> client?.sendChat(text) ?: false }
                 }
@@ -106,6 +112,8 @@ class VoiceService : Service(), VoiceClient.Listener {
 
     private fun disconnect() {
         VoiceServiceBus.sender = null
+        transcriber?.close()
+        transcriber = null
         setTalking(false)
         client?.disconnect()
         client = null
@@ -127,6 +135,7 @@ class VoiceService : Service(), VoiceClient.Listener {
     override fun onEvent(event: Event) {
         if (event is Event.Welcome) {
             lastRoom = event.room
+            roomName = event.room
             lastPeers = event.peers
             updateNotification(event.room)
         }
@@ -137,9 +146,37 @@ class VoiceService : Service(), VoiceClient.Listener {
         if (event is Event.TalkDeny) setTalking(false)
         if (event is Event.Audio) {
             play(event.bytes)
+            if (peerName.isNotEmpty() && speakingPcm.size() < 60 * 16_000 * 2) {
+                speakingPcm.write(event.bytes, 0, event.bytes.size)
+            }
             return // el audio no necesita repintar la pantalla
         }
+        if (event is Event.TalkStart) {
+            peerName = event.from
+            speakingPcm.reset()
+        }
+        if (event is Event.TalkEnd) {
+            val pcm = speakingPcm.toByteArray()
+            speakingPcm.reset()
+            if (pcm.isNotEmpty()) transcribeAndSave(event.from, pcm)
+            peerName = ""
+        }
+        if (event is Event.Chat) {
+            // El servidor también lo guarda, pero así queda en el móvil aunque
+            // se reinstale o se cambie de servidor.
+            store.add(roomName.ifEmpty { "General" }, event.entry.from.orEmpty(), event.entry.text, event.entry.mine)
+        }
         listener?.invoke(event)
+    }
+
+    private var peerName = ""
+
+    private fun transcribeAndSave(from: String, pcm: ByteArray) {
+        val engine = transcriber ?: return
+        engine.transcribe(0, from, pcm) { _, speaker, text ->
+            store.add(roomName.ifEmpty { "General" }, speaker, text, false)
+            listener?.invoke(Event.Chat(ChatEntry(speaker, text, System.currentTimeMillis(), false)))
+        }
     }
 
     override fun onLevel(level: Float) {

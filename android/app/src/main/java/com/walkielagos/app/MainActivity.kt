@@ -29,6 +29,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     private lateinit var binding: ActivityMainBinding
     private val chat = ChatAdapter(this)
+    private lateinit var store: HistoryStore
     private val prefs by lazy { getSharedPreferences("walkie", Context.MODE_PRIVATE) }
 
     private var pending: Settings? = null
@@ -52,6 +53,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         setContentView(binding.root)
 
         binding.chatList.adapter = chat
+        store = HistoryStore(this)
 
         prefs.getString("name", null)?.let { binding.nameField.setText(it) }
         prefs.getString("server", null)?.let { binding.serverField.setText(it) }
@@ -150,6 +152,14 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
     }
 
+    /** Historial guardado en este móvil para el canal. */
+    private fun loadHistory(roomName: String) {
+        val entries = store.recent(roomName, 120).map {
+            ChatEntry(it.from, it.text, it.at, it.mine)
+        }
+        chat.setHistory(entries)
+    }
+
     private fun startLan(name: String, room: Int) {
         val nodeId = prefs.getString("nodeId", null) ?: Lan.hex(Lan.newNodeId()).also {
             prefs.edit().putString("nodeId", it).apply()
@@ -163,6 +173,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
 
         LanService.listener = { event -> runOnUiThread { handle(event) } }
+        loadHistory(Lan.ROOMS.getOrElse(room) { Lan.ROOMS.first() })
         binding.login.visibility = View.GONE
         binding.stage.visibility = View.VISIBLE
         binding.chatBar.visibility = View.VISIBLE
@@ -226,6 +237,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
 
+        loadHistory(room)
         binding.login.visibility = View.GONE
         binding.stage.visibility = View.VISIBLE
         binding.chatBar.visibility = View.VISIBLE
@@ -295,7 +307,14 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                 connected = true
                 binding.roomLabel.text = event.room
                 binding.online.text = getString(R.string.online, event.peers.size)
-                chat.setHistory(event.history)
+                // El del móvil es más completo que el del servidor (incluye voces
+                // transcritas); si no hay nada guardado, se usa el del servidor.
+                val local = store.recent(event.room, 120)
+                if (local.isNotEmpty()) {
+                    chat.setHistory(local.map { ChatEntry(it.from, it.text, it.at, it.mine) })
+                } else {
+                    chat.setHistory(event.history)
+                }
                 paintPeers(event.peers)
                 paintPtt()
             }
@@ -373,6 +392,12 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             toast(getString(R.string.not_connected))
             return
         }
+        store.add(
+            if (lanMode) Lan.ROOMS.getOrElse(lanRoomIndex()) { "General" } else binding.roomLabel.text.toString(),
+            binding.nameField.text?.toString()?.trim().orEmpty(),
+            text,
+            true,
+        )
         binding.chatInput.setText("")
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(binding.chatInput.windowToken, 0)

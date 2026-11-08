@@ -40,6 +40,13 @@ android {
 
     packaging {
         resources.excludes += setOf("META-INF/*.kotlin_module")
+        jniLibs.useLegacyPackaging = true
+    }
+
+    // El modelo de voz español (unos 40 MB) se copia a assets si está descargado;
+    // si no, la app funciona igual, solo sin transcripción.
+    sourceSets.getByName("main") {
+        assets.srcDir("src/main/assets")
     }
 }
 
@@ -50,5 +57,7 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    // Transcripción de voz a texto en el propio móvil, sin internet.
+    implementation("com.alphacephei:vosk-android:0.3.47@aar")
     testImplementation("junit:junit:4.13.2")
 }

@@ -3,3 +3,4 @@ certs/
 *.log
 .DS_Store
 .env
+data/

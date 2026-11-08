@@ -521,13 +521,15 @@
         ? "ESCUCHANDO<br /><small>canal ocupado</small>"
         : "MANTÉN<br />PARA HABLAR";
     clearInterval(timer);
+    // Sin límite de tiempo: solo se muestra cuánto lleva hablando.
     if (!state.talking) return;
     timer = setInterval(() => {
-      const left =
-        (state.maxSeconds * 1000 - (Date.now() - state.startedAt)) / 1000;
+      const elapsed = Math.floor((Date.now() - state.startedAt) / 1000);
       $("pttTimer").textContent =
-        left <= 10 ? `${Math.max(0, left).toFixed(1)} s` : "";
-    }, 100);
+        elapsed >= 1
+          ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`
+          : "";
+    }, 250);
   }
 
   function flashBusy() {

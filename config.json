@@ -1,11 +1,26 @@
 {
   "appName": "Walkie Lagos",
   "pin": "lagos",
-  "maxTalkSeconds": 45,
   "rooms": [
-    { "id": "general", "name": "General", "emoji": "📢" },
-    { "id": "cocina", "name": "Cocina", "emoji": "🍳" },
-    { "id": "sala", "name": "Sala", "emoji": "🍽️" },
-    { "id": "barra", "name": "Barra", "emoji": "🍺" }
+    {
+      "id": "general",
+      "name": "General",
+      "emoji": "📢"
+    },
+    {
+      "id": "cocina",
+      "name": "Cocina",
+      "emoji": "🍳"
+    },
+    {
+      "id": "sala",
+      "name": "Sala",
+      "emoji": "🍽️"
+    },
+    {
+      "id": "barra",
+      "name": "Barra",
+      "emoji": "🍺"
+    }
   ]
 }

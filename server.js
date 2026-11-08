@@ -32,7 +32,8 @@ const HOST = process.env.HOST || '0.0.0.0';
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const ROOMS = new Map(config.rooms.map((r) => [r.id, r]));
 const DEFAULT_ROOM = config.rooms[0]?.id || 'general';
-const MAX_TALK_MS = Number(config.maxTalkSeconds || 45) * 1000;
+// 0 = sin límite: se habla todo lo que se quiera y se suelta al terminar.
+const MAX_TALK_MS = Math.max(0, Number(config.maxTalkSeconds ?? 0)) * 1000;
 const PIN = String(process.env.PIN ?? config.pin ?? '').trim();
 
 /** clientId -> cliente */
@@ -44,7 +45,39 @@ const talking = new Map();
 /** roomId -> últimos mensajes */
 const history = new Map();
 
-const HISTORY_SIZE = 60;
+const HISTORY_SIZE = 200;
+
+// El historial se guarda en disco para que no se pierda al reiniciar. Si no hay
+// permiso de escritura, se sigue funcionando solo en memoria.
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+
+function loadHistory() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    for (const [roomId, entries] of Object.entries(raw)) {
+      if (Array.isArray(entries)) history.set(roomId, entries.slice(-HISTORY_SIZE));
+    }
+  } catch {}
+}
+
+let saveTimer = null;
+
+function writeHistoryNow() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const out = {};
+    for (const [roomId, entries] of history) out[roomId] = entries.slice(-HISTORY_SIZE);
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(out));
+  } catch {}
+}
+
+function saveHistory() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(writeHistoryNow, 800);
+}
+
+loadHistory();
 
 const roomSet = (roomId) => {
   if (!roomMembers.has(roomId)) roomMembers.set(roomId, new Set());
@@ -124,7 +157,7 @@ app.get('/api/config', (_req, res) => {
     appName: config.appName,
     tagline: config.tagline,
     requiresPin: Boolean(PIN),
-    maxTalkSeconds: config.maxTalkSeconds,
+    maxTalkSeconds: MAX_TALK_MS / 1000,
     rooms: publicRooms(),
   });
 });
@@ -194,7 +227,7 @@ wss.on('connection', (ws) => {
           rooms: publicRooms(),
           users: rosterOf(client.room),
           history: history.get(client.room) || [],
-          maxTalkSeconds: config.maxTalkSeconds,
+          maxTalkSeconds: MAX_TALK_MS / 1000,
         });
         broadcast(client.room, { type: 'system', text: `${name} ha entrado`, ts: Date.now() }, client.id);
         pushRoster(client.room);
@@ -241,11 +274,13 @@ wss.on('connection', (ws) => {
         }
         if (slot) break; // ya tienes la palabra
 
-        const entry = { clientId: client.id, name: client.name };
-        entry.timer = setTimeout(() => stopTalking(client.room, 'timeout'), MAX_TALK_MS);
+        const entry = { clientId: client.id, name: client.name, timer: null };
+        if (MAX_TALK_MS > 0) {
+          entry.timer = setTimeout(() => stopTalking(client.room, 'timeout'), MAX_TALK_MS);
+        }
         talking.set(client.room, entry);
 
-        sendTo(client, { type: 'talkAccept', maxSeconds: config.maxTalkSeconds });
+        sendTo(client, { type: 'talkAccept', maxSeconds: MAX_TALK_MS / 1000 });
         broadcast(client.room, { type: 'talkStart', from: client.name }, client.id);
         pushRooms();
         pushRoster(client.room);
@@ -260,6 +295,7 @@ wss.on('connection', (ws) => {
         const list = history.get(client.room) || [];
         list.push(entry);
         history.set(client.room, list.slice(-HISTORY_SIZE));
+        saveHistory();
         broadcast(client.room, { type: 'chat', ...entry });
         break;
       }
@@ -318,6 +354,7 @@ server.listen(PORT, HOST, () => {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     clearInterval(heartbeat);
+    writeHistoryNow();
     for (const c of clients.values()) c.ws.close(1001, 'cerrando');
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000);
