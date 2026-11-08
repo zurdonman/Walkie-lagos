@@ -37,6 +37,9 @@
     <string name="bad_server">Dirección no válida. Ejemplo: 192.168.1.50</string>
     <string name="no_mic">Sin micrófono no se puede hablar, pero el chat funciona igual</string>
     <string name="mode_server">Con servidor</string>
+    <string name="mode_test">Probar</string>
+    <string name="test_mode_status">MODO PRUEBA · sin servidor y sin wifi · hay un compañero de mentira</string>
+    <string name="help_test">Para probar la app sin servidor y sin wifi: hay un compañero simulado que contesta en el chat, y funciona todo (canales, hablar, transcripción, historial).</string>
     <string name="mode_wifi">Solo wifi</string>
     <string name="help_server">Necesita un ordenador o servidor en la red (o internet). Pide la dirección y el PIN al encargado.</string>
     <string name="help_wifi">Sin servidor ni internet: solo la wifi del local. Todos los móviles con la app abierta en el mismo canal se oyen entre sí. No hace falta configurar nada.</string>

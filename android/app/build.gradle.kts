@@ -11,8 +11,8 @@ android {
         applicationId = "com.walkielagos.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
     }
 
     // Clave propia para que las actualizaciones se instalen encima (con dos claves

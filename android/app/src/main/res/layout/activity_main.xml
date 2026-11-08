@@ -57,6 +57,14 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="@string/mode_wifi" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/modeTest"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/mode_test" />
             </com.google.android.material.button.MaterialButtonToggleGroup>
 
             <com.google.android.material.textfield.TextInputLayout

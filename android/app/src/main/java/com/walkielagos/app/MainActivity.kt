@@ -35,6 +35,8 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     private var pending: Settings? = null
     private var lanMode = false
+    private var testMode = false
+    private var testPeer: TestPeer? = null
     private var connected = false
     private var peerTalking: String? = null
     private var talking = false
@@ -52,7 +54,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WalkieLog.start(this)
-        WalkieLog.i("Abriendo la app (modo guardado: ${if (prefs.getString("mode", "server") == "wifi") "wifi" else "servidor"})")
+        WalkieLog.i("Abriendo la app (modo guardado: ${prefs.getString("mode", "wifi")})")
         // Si algo falla al montar la pantalla, se ve un aviso con el motivo en vez de
         // que Android cierre la app sin explicación.
         try {
@@ -79,15 +81,22 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         prefs.getString("pin", null)?.let { binding.pinField.setText(it) }
         prefs.getString("room", null)?.let { binding.roomField.setText(it) }
 
-        if (prefs.getString("mode", "server") == "wifi") {
-            binding.modeWifi.isChecked = true
-            lanMode = true
-        } else {
-            binding.modeServer.isChecked = true
+        when (prefs.getString("mode", "wifi")) {
+            "wifi" -> {
+                binding.modeWifi.isChecked = true
+                lanMode = true
+            }
+            "test" -> {
+                binding.modeTest.isChecked = true
+                testMode = true
+            }
+            else -> binding.modeServer.isChecked = true
         }
         binding.modeGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
             lanMode = checkedId == R.id.modeWifi
+            testMode = checkedId == R.id.modeTest
+            prefs.edit().putString("mode", if (testMode) "test" else if (lanMode) "wifi" else "server").apply()
             paintMode()
         }
         paintMode()
@@ -250,14 +259,21 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     /** Muestra u oculta lo que sobra según el modo elegido. */
     private fun paintMode() {
-        binding.serverBox.visibility = if (lanMode) View.GONE else View.VISIBLE
-        binding.pinBox.visibility = if (lanMode) View.GONE else View.VISIBLE
-        binding.loginHelp.text = getString(if (lanMode) R.string.help_wifi else R.string.help_server)
-        val rooms = if (lanMode) Lan.ROOMS else listOf(getString(R.string.default_room))
+        val sinServidor = lanMode || testMode
+        binding.serverBox.visibility = if (sinServidor) View.GONE else View.VISIBLE
+        binding.pinBox.visibility = if (sinServidor) View.GONE else View.VISIBLE
+        binding.loginHelp.text = getString(
+            when {
+                testMode -> R.string.help_test
+                lanMode -> R.string.help_wifi
+                else -> R.string.help_server
+            }
+        )
+        val rooms = if (lanMode || testMode) Lan.roomsFor(testMode) else listOf(getString(R.string.default_room))
         binding.roomField.setAdapter(
             android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_1, rooms)
         )
-        binding.roomField.setText(if (lanMode) Lan.ROOMS.first() else getString(R.string.default_room))
+        binding.roomField.setText(if (lanMode || testMode) Lan.roomsFor(testMode).first() else getString(R.string.default_room))
     }
 
     private fun lanRoomIndex(): Int {
@@ -267,10 +283,41 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     }
 
     /** Modo sin servidor: nombre, canal y a hablar por la wifi. */
+    /** Modo prueba: sin servidor, sin wifi y sin nadie más. Todo funciona menos el audio real. */
+    private fun enterTest() {
+        val name = binding.nameField.text?.toString()?.trim().orEmpty().ifBlank { "Yo (prueba)" }
+        prefs.edit()
+            .putString("name", name)
+            .putString("mode", "test")
+            .putBoolean("joined", true)
+            .putInt("roomIndex", 0)
+            .apply()
+        startTest(name)
+    }
+
+    private fun startTest(name: String) {
+        val peer = TestPeer { event -> runOnUiThread { handle(event) } }
+        testPeer = peer
+        currentRoom = 0
+        binding.login.visibility = View.GONE
+        binding.stage.visibility = View.VISIBLE
+        binding.chatBar.visibility = View.VISIBLE
+        binding.roomLabel.text = Lan.roomsFor(true).first()
+        binding.online.text = getString(R.string.peers_online, 2)
+        binding.status.text = getString(R.string.test_mode_status)
+        loadHistory(Lan.roomsFor(true).first())
+        paintFloatingButton()
+        connected = true
+        WalkieLog.i("Modo prueba: dentro como $name (sin servidor y sin wifi)")
+        peer.start()
+    }
+
     private fun enterLan() {
         val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         if (!wifi.isWifiEnabled) {
+            // Sin wifi no hay radio, pero se puede seguir probando la app.
             toast(getString(R.string.need_wifi))
+            WalkieLog.w("Wifi apagada: no se puede entrar en modo wifi")
             return
         }
         val name = binding.nameField.text?.toString()?.trim().orEmpty()
@@ -313,6 +360,10 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
      */
     /** Activa o quita el botón que flota sobre otras apps (para hablar sin abrirla). */
     private fun toggleFloating() {
+        if (testMode) {
+            toast("El botón flotante necesita la radio o el servidor (no en modo prueba)")
+            return
+        }
         val activo = prefs.getBoolean(LanService.KEY_FLOATING, false)
         if (!activo && !FloatingButton.canShow(this)) {
             // Se pide el permiso y se recuerda que el usuario quiere el botón.
@@ -349,8 +400,9 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     }
 
     private fun pickRoom() {
-        val nombres = Lan.ROOMS.map { nombre ->
-            if (Lan.ROOMS.indexOf(nombre) == currentRoom) "● $nombre" else "○ $nombre"
+        val canales = Lan.roomsFor(testMode)
+        val nombres = canales.map { nombre ->
+            if (canales.indexOf(nombre) == currentRoom) "● $nombre" else "○ $nombre"
         }.toTypedArray()
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(R.string.pick_room)
@@ -373,6 +425,14 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             .putBoolean("joined", true)
             .apply()
         WalkieLog.i("Canal: cambio a ${Lan.ROOMS.getOrElse(room) { "?" }}")
+        if (testMode) {
+            val nombre = Lan.roomsFor(true).getOrElse(room) { "General" }
+            binding.roomLabel.text = nombre
+            loadHistory(nombre)
+            testPeer?.setRoom(nombre)
+            toast(getString(R.string.room_changed, nombre))
+            return
+        }
         if (lanMode) {
             startService(Intent(this, LanService::class.java).apply {
                 action = LanService.ACTION_ROOM
@@ -419,6 +479,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
 
     /** En modo wifi no hay dirección ni PIN: solo nombre y canal. */
     private fun enter() {
+        if (testMode) return enterTest()
         if (lanMode) return enterLan()
 
         val server = binding.serverField.text?.toString()?.trim().orEmpty()
@@ -482,9 +543,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         binding.nameField.error = null
     }
 
-    private fun leave() {
-        startService(Intent(this, VoiceService::class.java).apply { action = VoiceService.ACTION_STOP })
-        startService(Intent(this, LanService::class.java).apply { action = LanService.ACTION_STOP })
+    private fun leaveUi() {
         LanService.listener = null
         connected = false
         talking = false
@@ -498,11 +557,36 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         binding.chatBar.visibility = View.GONE
     }
 
+    private fun leave() {
+        if (testMode) {
+            testPeer?.stop()
+            testPeer = null
+            testMode = false
+            binding.roomLabel.text = getString(R.string.connecting)
+            binding.status.text = ""
+            leaveUi()
+            return
+        }
+        startService(Intent(this, VoiceService::class.java).apply { action = VoiceService.ACTION_STOP })
+        startService(Intent(this, LanService::class.java).apply { action = LanService.ACTION_STOP })
+        leaveUi()
+    }
+
     // ------------------------------------------------------------------ hablar
 
     private fun onPushToTalk(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (testMode) {
+                    if (peerTalking != null) {
+                        toast(getString(R.string.busy, peerTalking))
+                        return true
+                    }
+                    talking = true
+                    binding.ptt.text = getString(R.string.talking)
+                    WalkieLog.i("Modo prueba: hablando")
+                    return true
+                }
                 // En wifi no hace falta esperar a nadie: la radio ya está escuchando.
                 if (!lanMode && !connected) {
                     toast(getString(R.string.not_connected))
@@ -518,6 +602,14 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (talking) {
                 talking = false
+                if (testMode) {
+                    binding.ptt.text = getString(R.string.push_to_talk)
+                    val yo = prefs.getString("name", null) ?: "Yo (prueba)"
+                    store.add(binding.roomLabel.text.toString(), yo, "(lo que he dicho en la prueba)", true)
+                    chat.add(ChatEntry(yo, "(lo que he dicho en la prueba)", System.currentTimeMillis(), true))
+                    testPeer?.onMeHablando()
+                    return true
+                }
                 startService(talkIntent(false))
                 paintPtt()
             }
@@ -638,7 +730,10 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     private fun sendChat() {
         val text = binding.chatInput.text?.toString()?.trim().orEmpty()
         if (text.isEmpty()) return
-        val sent = if (lanMode) {
+        val sent = if (testMode) {
+            testPeer?.onMyMessage(text)
+            true
+        } else if (lanMode) {
             val radio = LanService.sender
             if (radio == null) {
                 false

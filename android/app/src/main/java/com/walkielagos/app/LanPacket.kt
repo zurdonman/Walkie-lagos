@@ -32,6 +32,13 @@ object Lan {
     /** El índice es lo que viaja en el paquete: no reordenar (ver lan/protocol.mjs). */
     val ROOMS = listOf("General", "Cocina", "Comedor", "Barra", "Terraza")
 
+    /** En modo prueba: el canal «Prueba» no viaja por la radio, es solo para probar. */
+    val TEST_ROOM = "Prueba"
+
+    /** Canales que se pueden elegir en cada modo. */
+    fun roomsFor(testMode: Boolean): List<String> =
+        if (testMode) ROOMS + TEST_ROOM else ROOMS
+
     data class Packet(
         val type: Byte,
         val room: Int,
