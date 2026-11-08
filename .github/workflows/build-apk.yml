@@ -82,9 +82,13 @@ jobs:
         run: |
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | tail -1)apksigner
           for f in artifacts/walkie-lagos.apk artifacts/walkie-lagos-diagnostico.apk; do
-            "$APKSIGNER" verify --print-certs "$f" | head -3
-            echo "::notice title=Firma::$(basename "$f") firmado con la misma clave"
+            "$APKSIGNER" verify --print-certs "$f" | grep -m1 "SHA-256" | tee "/tmp/$(basename "$f").sha"
           done
+          if diff -q /tmp/walkie-lagos.apk.sha /tmp/walkie-lagos-diagnostico.apk.sha > /dev/null; then
+            echo "::notice title=Firma::los dos APK van firmados con la misma clave"
+          else
+            echo "::error title=Firma::los APK no comparten clave; Android pedirá desinstalar"
+          fi
 
       - name: Verificar el APK
         run: |

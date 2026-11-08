@@ -178,6 +178,8 @@ main_kt = open('android/app/src/main/java/com/walkielagos/app/MainActivity.kt').
 ok('WalkieLog.start(this)' in main_kt, 'el registro arranca al abrir la app')
 ok(main_kt.index('WalkieLog.start(this)') < main_kt.index('ActivityMainBinding.inflate'), 'antes de dibujar la pantalla')
 ok('safe("Entrar")' in main_kt, 'un fallo al entrar no cierra la app')
+ok('showFallback' in main_kt, 'si la pantalla no se puede montar, se ve el motivo')
+ok('buildUi(' in main_kt, 'el montaje de la pantalla está protegido')
 wf3 = open('.github/workflows/build-apk.yml').read()
 ok('assembleRelease' in wf3 and 'walkie-lagos-diagnostico.apk' in wf3, 'se publican el APK normal y el de diagnóstico')
 ok('keystore.b64' in wf3, 'los dos van firmados con la misma clave')

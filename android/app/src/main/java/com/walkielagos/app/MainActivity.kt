@@ -52,6 +52,18 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         super.onCreate(savedInstanceState)
         WalkieLog.start(this)
         WalkieLog.i("Abriendo la app (modo guardado: ${if (prefs.getString("mode", "server") == "wifi") "wifi" else "servidor"})")
+        // Si algo falla al montar la pantalla, se ve un aviso con el motivo en vez de
+        // que Android cierre la app sin explicación.
+        try {
+            buildUi(savedInstanceState)
+            WalkieLog.i("Pantalla lista")
+        } catch (error: Throwable) {
+            WalkieLog.e("No se pudo montar la pantalla", error)
+            showFallback(error)
+        }
+    }
+
+    private fun buildUi(savedInstanceState: Bundle?) {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -94,6 +106,49 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
         }
     }
 
+    /**
+     * Pantalla mínima si el diseño normal no se puede montar: dice qué pasó y deja
+     * copiar el mensaje. Así la app nunca se queda en «se ha cerrado».
+     */
+    private fun showFallback(error: Throwable) {
+        val detail = "${error.javaClass.simpleName}: ${error.message}"
+        val scroll = android.widget.ScrollView(this)
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 96, 48, 48)
+        }
+        box.addView(
+            android.widget.TextView(this).apply {
+                text = "Walkie Lagos no ha podido abrir la pantalla.\n\n$detail"
+                textSize = 16f
+            }
+        )
+        box.addView(
+            android.widget.TextView(this).apply {
+                text = "\nEl detalle está en Descargas/log walkie/walkie-log.txt.\nPuedes copiar el texto y enviármelo."
+                textSize = 13f
+            }
+        )
+        box.addView(
+            android.widget.Button(this).apply {
+                text = "Copiar el detalle"
+                setOnClickListener {
+                    val board = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    board.setPrimaryClip(android.content.ClipData.newPlainText("walkie", detail))
+                    android.widget.Toast.makeText(this, "Copiado", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+        box.addView(
+            android.widget.Button(this).apply {
+                text = "Ver el registro"
+                setOnClickListener { showLogMenu() }
+            }
+        )
+        scroll.addView(box)
+        setContentView(scroll)
+    }
+
     /** Enseña dónde está el registro y deja compartirlo o borrarlo. */
     private fun showLogMenu() {
         val txt = File(WalkieLog.downloadDir(), "walkie-log.txt")
@@ -122,7 +177,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                     else -> File(WalkieLog.privateDir(ctx), "walkie-log.txt")
                 }
                 if (!target.exists()) {
-                    toast("Todavía no hay registro")
+                    android.widget.Toast.makeText(this, "Todavía no hay registro", android.widget.Toast.LENGTH_SHORT).show()
                 } else {
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
