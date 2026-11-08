@@ -163,6 +163,10 @@ ok('installIfBundled' in tr and 'executor.execute' in tr.split('installIfBundled
 ok('if (!installed()) return false' in tr, 'mientras se copia, no se da por roto')
 
 print("\nREGISTRO DE FALLOS (para saber por qué se cierra)")
+# Regla sencilla que evita un error que ya rompió la compilación: dentro de un
+# bloque apply de un botón, Toast.makeText(this, ...) apunta al botón, no a la pantalla.
+toast_bad = [l for l in main_act.splitlines() if 'Toast.makeText(this' in l and l.strip().startswith('android.widget')]
+ok(not toast_bad, 'los avisos usan la función toast() y no Toast.makeText(this…) dentro de apply')
 log_kt = open('android/app/src/main/java/com/walkielagos/app/WalkieLog.kt').read()
 ok('Download' in log_kt and 'log walkie' in log_kt, 'el registro va a Descargas/log walkie')
 ok('UncaughtExceptionHandler' in log_kt or 'setDefaultUncaughtExceptionHandler' in log_kt, 'captura el fallo que cierra la app')

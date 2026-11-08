@@ -135,7 +135,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                 setOnClickListener {
                     val board = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     board.setPrimaryClip(android.content.ClipData.newPlainText("walkie", detail))
-                    android.widget.Toast.makeText(this, "Copiado", android.widget.Toast.LENGTH_SHORT).show()
+                    toast("Copiado")
                 }
             }
         )
@@ -177,7 +177,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                     else -> File(WalkieLog.privateDir(ctx), "walkie-log.txt")
                 }
                 if (!target.exists()) {
-                    android.widget.Toast.makeText(this, "Todavía no hay registro", android.widget.Toast.LENGTH_SHORT).show()
+                    toast("Todavía no hay registro")
                 } else {
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
