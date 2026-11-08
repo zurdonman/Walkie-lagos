@@ -36,21 +36,21 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee /tmp/build.log
         shell: bash
 
-      - name: Verificar el APK
-        run: |
-          AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | tail -1)aapt2
-          "$AAPT" dump badging artifacts/walkie-lagos.apk > /tmp/badging.txt || true
-          for key in "package:" "sdkVersion" "targetSdkVersion" "application-label" "uses-permission: name='android.permission.RECORD_AUDIO'" "launchable-activity"; do
-            line=$(grep -m1 "$key" /tmp/badging.txt || echo "NO ENCONTRADO: $key")
-            echo "::notice title=APK::${line}"
-          done
-          "$AAPT" dump permissions artifacts/walkie-lagos.apk >> /tmp/badging.txt
-
       - name: Nombre del archivo
         run: |
           mkdir -p artifacts
           cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/walkie-lagos.apk
           ls -lh artifacts/walkie-lagos.apk
+
+      - name: Verificar el APK
+        run: |
+          AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | tail -1)aapt2
+          "$AAPT" dump badging android/app/build/outputs/apk/debug/app-debug.apk > /tmp/badging.txt || true
+          for key in "package:" "sdkVersion" "targetSdkVersion" "application-label" "uses-permission: name='android.permission.RECORD_AUDIO'" "launchable-activity"; do
+            line=$(grep -m1 "$key" /tmp/badging.txt || echo "NO ENCONTRADO: $key")
+            echo "::notice title=APK::${line}"
+          done
+          "$AAPT" dump permissions android/app/build/outputs/apk/debug/app-debug.apk >> /tmp/badging.txt
 
       - name: Publicar el error como anotaciones
         if: failure()
