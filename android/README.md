@@ -21,16 +21,30 @@ En la pantalla de entrada se pide:
 
 ## Cómo conseguir el APK
 
-No hace falta instalar Android Studio. Al subir cambios a GitHub, la acción
-`.github/workflows/build-apk.yml` compila el APK:
+No hace falta instalar Android Studio: GitHub lo compila en cada push.
 
-1. Pestaña **Actions** → última ejecución de "Compilar APK".
-2. Abajo, en **Artifacts**, descarga `walkie-lagos-apk`.
-3. Descomprime y pasa `walkie-lagos.apk` al móvil (WhatsApp, Drive, cable…).
-4. En el móvil: abrir el archivo y permitir **"Instalar apps desconocidas"** para esa
-   aplicación (Chrome/Archivos). Es normal: el APK no viene de Play Store.
+**Descarga directa** (la más cómoda): abre
+<https://github.com/zurdonman/Walkie-lagos/releases/latest> en el móvil y toca
+`walkie-lagos.apk`. Se guarda en Descargas.
 
-Si el repositorio está en `main`, además se publica en **Releases** con enlace directo.
+**Desde Actions**: pestaña *Actions* → "Compilar APK" → última ejecución → *Artifacts* →
+`walkie-lagos-apk` (es un .zip, hay que descomprimirlo).
+
+### Instalarlo en el Android
+
+1. Descarga `walkie-lagos.apk` en el móvil (o pásalo por WhatsApp/Drive/cable).
+2. Ábrelo desde Descargas o desde el gestor de archivos.
+3. Android dirá que no puede instalar apps de esta fuente: toca **Ajustes** y activa
+   **"Permitir desde esta aplicación"** (Chrome o Archivos). Es normal, el APK no viene
+   de Play Store.
+4. Puede salir *"¿Instalar aplicación desconocida?"* → **Instalar**. Si Play Protect
+   avisa, elige **"Instalar de todos modos"**.
+5. Al abrir la app: acepta el permiso de **micrófono** (imprescindible para hablar) y el
+   de **notificaciones** (para que siga conectada con la pantalla apagada).
+6. Escribe la IP del servidor, tu nombre, el PIN y el canal → **Entrar**.
+
+Cada nueva versión se instala encima (no hace falta desinstalar) siempre que la firma
+sea la misma; los APK de depuración generados aquí lo son.
 
 ### Compilarlo tú mismo
 

@@ -19,16 +19,17 @@ PIN por defecto: `lagos` (cámbialo en `config.json`).
 
 ## El APK de Android
 
-El APK se compila solo en GitHub (no hace falta Android Studio):
+El APK se compila solo en GitHub; no hace falta Android Studio:
 
-1. Sube los cambios al repositorio.
-2. Pestaña **Actions** → **Compilar APK** → ejecución más reciente.
-3. Descarga el artefacto **walkie-lagos-apk** y descomprímelo.
-4. Pasa `walkie-lagos.apk` al móvil y ábrelo. Android pedirá permitir "instalar apps
-   desconocidas" para esa aplicación: es normal, el APK no viene de Play Store.
+**Descarga:** <https://github.com/zurdonman/Walkie-lagos/releases/latest> → `walkie-lagos.apk`
+(se abre desde el propio móvil). También está en *Actions → Compilar APK → Artifacts*.
 
-En `main` además se publica en **Releases** con enlace directo. Para compilarlo en tu
-ordenador: `cd android && gradle :app:assembleDebug`.
+**Instalar:** abrir el archivo → permitir "instalar apps desconocidas" para Chrome o
+Archivos → Instalar. Si Play Protect avisa, "Instalar de todos modos".
+
+**Configurar:** IP del servidor (`192.168.1.50`), tu nombre, el PIN y el canal.
+
+Para compilarlo en tu ordenador: `cd android && gradle :app:assembleDebug`.
 
 En el móvil, la pantalla de entrada pide:
 

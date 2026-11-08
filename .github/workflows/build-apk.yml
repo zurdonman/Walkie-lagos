@@ -46,9 +46,10 @@ jobs:
         run: |
           AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | tail -1)aapt2
           "$AAPT" dump badging android/app/build/outputs/apk/debug/app-debug.apk > /tmp/badging.txt || true
-          for key in "package:" "sdkVersion" "targetSdkVersion" "application-label" "uses-permission: name='android.permission.RECORD_AUDIO'" "launchable-activity"; do
+          for key in "package:" "targetSdkVersion" "application-label" "uses-permission: name='android.permission.RECORD_AUDIO'" "launchable-activity"; do
             line=$(grep -m1 "$key" /tmp/badging.txt || echo "NO ENCONTRADO: $key")
             echo "::notice title=APK::${line}"
+            case "$line" in NO\ ENCONTRADO*) echo "::warning title=APK::${line}" ;; esac
           done
           "$AAPT" dump permissions android/app/build/outputs/apk/debug/app-debug.apk >> /tmp/badging.txt
 
