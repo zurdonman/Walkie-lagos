@@ -204,6 +204,18 @@ ok('getUriForFile' in main2 and 'getOrNull()' in main2, 'enviar el registro no p
 paths = open('android/app/src/main/res/xml/file_paths.xml').read()
 ok('external-path' in paths, 'el archivo de Descargas se puede enviar')
 
+print("\nCHAT Y LO HABLADO EN EL CHAT")
+layout_txt = open('android/app/src/main/res/layout/activity_main.xml').read()
+ok('@+id/chatBar' in layout_txt and 'layout_weight="1"' in layout_txt.split('@+id/chatBar')[1][:400],
+   'el chat ocupa su espacio (antes: 150dp fijos)')
+ok('@+id/chatInput' in layout_txt and '@+id/sendButton' in layout_txt, 'hay caja de texto y botón de enviar')
+ok('@+id/status' in layout_txt, 'línea para el estado de la radio (IP y grupo)')
+ok('chat.add(mio)' in main_act, 'lo que escribo aparece al momento en el chat')
+ok('isDuplicate' in main_act, 'y no se duplica cuando vuelve del servicio')
+ok('noteVoz' in lan_svc, 'si no se transcribe, queda el aviso de voz')
+ok('isAvailable()' in lan_svc, 'se comprueba el modelo antes de gastar tiempo')
+ok('Voz: transcribiendo' in tr, 'la transcripción deja rastro en el registro')
+
 print("\nREGISTRO DE FALLOS (para saber por qué se cierra)")
 # Regla sencilla que evita un error que ya rompió la compilación: dentro de un
 # bloque apply de un botón, Toast.makeText(this, ...) apunta al botón, no a la pantalla.
@@ -231,7 +243,7 @@ ok('assembleRelease' in wf3 and 'walkie-lagos-diagnostico.apk' in wf3, 'se publi
 ok('keystore.b64' in wf3, 'los dos van firmados con la misma clave')
 ok(os.path.exists('scripts/keystore.b64'), 'la clave está en el repositorio (APK actualizables)')
 gradle2 = open('android/app/build.gradle.kts').read()
-ok('versionCode = 4' in gradle2, 'la versión sube para poder instalar encima')
+ok('versionCode = 5' in gradle2, 'la versión sube para poder instalar encima')
 
 print("\nRESUMEN:", "TODO OK" if not fail else f"{len(fail)} FALLOS")
 sys.exit(0 if not fail else 1)

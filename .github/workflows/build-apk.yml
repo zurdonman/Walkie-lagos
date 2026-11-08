@@ -53,6 +53,15 @@ jobs:
             cp -r /tmp/vosk/vosk-model-small-es-0.42/* android/app/src/main/assets/vosk-es/
             du -sh android/app/src/main/assets/vosk-es
             echo "::notice title=Transcripción::modelo incluido en el APK"
+            # El modelo tiene que llegar completo: si falta la carpeta am/ o el
+            # diccionario, Vosk no arranca y la app se queda sin transcripción.
+            for f in am/final.mdl conf/mfcc.conf conf/model.conf; do
+              if [ ! -f "android/app/src/main/assets/vosk-es/$f" ]; then
+                echo "::error title=Transcripción::falta vosk-es/$f dentro del modelo"
+                exit 1
+              fi
+            done
+            echo "::notice title=Transcripción::modelo completo (am/final.mdl, conf, diccionario)"
           else
             echo "::warning title=Transcripción::no se pudo descargar el modelo; el APK se compila sin transcripción"
           fi
@@ -103,8 +112,9 @@ jobs:
           done
           "$AAPT" dump permissions artifacts/walkie-lagos.apk >> /tmp/badging.txt
           # El modelo de voz tiene que ir dentro, si no la transcripción no existe.
-          if unzip -l artifacts/walkie-lagos.apk | grep -q "assets/vosk-es/"; then
-            echo "::notice title=Transcripción::modelo de voz incluido en el APK"
+          if unzip -l artifacts/walkie-lagos.apk | grep -q "assets/vosk-es/am/final.mdl"; then
+            # Comprobado DENTRO del APK (no solo en el proyecto): el modelo va entero.
+            echo "::notice title=Transcripción::modelo de voz incluido y completo en el APK"
           else
             echo "::warning title=Transcripción::el APK sale SIN modelo de voz; la voz no se transcribirá"
           fi

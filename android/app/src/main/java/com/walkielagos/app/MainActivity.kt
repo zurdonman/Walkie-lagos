@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     private var connected = false
     private var peerTalking: String? = null
     private var talking = false
+    private var lastStatus = ""
 
     private val askPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -435,8 +436,12 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                 binding.online.text = getString(R.string.peers_online, event.count)
             }
             is Event.Status -> {
-                binding.roomLabel.text = event.text
-                WalkieLog.i("Estado: ${event.text}")
+                binding.status.text = event.text
+                // Solo se apunta en el registro cuando cambia (antes se repetía cada 2 s).
+                if (event.text != lastStatus) {
+                    lastStatus = event.text
+                    WalkieLog.i("Estado: ${event.text}")
+                }
             }
             is Event.Welcome -> {
                 connected = true
@@ -480,7 +485,12 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
                 binding.incoming.visibility = View.GONE
                 paintPtt()
             }
-            is Event.Chat -> chat.add(event.entry)
+            is Event.Chat -> {
+                if (!isDuplicate(event.entry)) chat.add(event.entry)
+                // Que se vea el mensaje recién llegado (el chat ocupa su propio espacio).
+                binding.chatList.scrollToPosition(chat.itemCount - 1)
+                if (!event.entry.mine && !documentHidden()) vibrate(20)
+            }
             is Event.System -> chat.add(ChatEntry(null, event.text, event.ts, false))
             is Event.Failure -> toast(event.message)
             is Event.Disconnected -> {
@@ -527,12 +537,18 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
             toast(getString(R.string.not_connected))
             return
         }
+        WalkieLog.i("Chat: enviado \"${text.take(60)}\" (${if (lanMode) "wifi" else "servidor"})")
         store.add(
             if (lanMode) Lan.ROOMS.getOrElse(lanRoomIndex()) { "General" } else binding.roomLabel.text.toString(),
             binding.nameField.text?.toString()?.trim().orEmpty(),
             text,
             true,
         )
+        val mio = ChatEntry(binding.nameField.text?.toString()?.trim().orEmpty(), text, System.currentTimeMillis(), true)
+        lastMine = "${text}|${mio.from}"
+        lastMineAt = System.currentTimeMillis()
+        chat.add(mio)
+        binding.chatList.scrollToPosition(chat.itemCount - 1)
         binding.chatInput.setText("")
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(binding.chatInput.windowToken, 0)
@@ -541,6 +557,24 @@ class MainActivity : AppCompatActivity(), ChatAdapter.Listener {
     override fun onChatLongPress(entry: ChatEntry) {
         entry.from?.let { toast(it) }
     }
+
+    private var lastMine = ""
+    private var lastMineAt = 0L
+
+    /** Evita que lo que acabo de escribir salga dos veces (local + vuelta del servicio). */
+    private fun isDuplicate(entry: ChatEntry): Boolean {
+        val clave = "${entry.text}|${entry.from}"
+        val ahora = System.currentTimeMillis()
+        if (entry.mine && clave == lastMine && ahora - lastMineAt < 3000) return true
+        if (entry.mine) {
+            lastMine = clave
+            lastMineAt = ahora
+        }
+        return false
+    }
+
+    private fun documentHidden(): Boolean = !hasWindowFocus()
+
 
     private fun vibrate(ms: Long) {
         val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator

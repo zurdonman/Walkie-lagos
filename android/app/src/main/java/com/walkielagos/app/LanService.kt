@@ -141,23 +141,37 @@ class LanService : Service(), LanRadio.Listener {
     }
 
     private fun transcribeAndBroadcast(pcm: ByteArray) {
+        val segundos = pcm.size / (Lan.SAMPLE_RATE * 2)
+        val yo = myName.ifBlank { "Móvil" }
+        WalkieLog.i("Wifi: he hablado $segundos s; se transcribe en este móvil")
         val engine = transcriber
-        if (engine == null) {
-            radio?.sendChat(AUDIO_NOTE.format(pcm.size / (Lan.SAMPLE_RATE * 2)))
+        if (engine == null || !engine.isAvailable()) {
+            noteVoz(segundos, "no hay transcripción disponible")
             return
         }
         engine.transcribe(
             currentRoom,
-            myName.ifBlank { "Móvil" },
+            yo,
             pcm,
             object : Transcriber.Listener {
                 override fun onTranscribed(roomIndex: Int, speaker: String, text: String) {
-                    store.add(Lan.ROOMS.getOrElse(roomIndex) { "General" }, speaker, text, true)
+                    val roomName = Lan.ROOMS.getOrElse(roomIndex) { "General" }
+                    store.add(roomName, speaker, text, true)
                     listener?.invoke(Event.Chat(ChatEntry(speaker, text, System.currentTimeMillis(), true)))
                     radio?.sendChat(text)
                 }
             },
         )
+    }
+
+    /** Si no hay texto, queda al menos el aviso de voz (aquí y en los demás móviles). */
+    private fun noteVoz(segundos: Int, motivo: String) {
+        val texto = AUDIO_NOTE.format(if (segundos < 1) 1 else segundos)
+        WalkieLog.w("Wifi: lo hablado se queda sin transcribir ($motivo); se anota \"$texto\"")
+        val roomName = Lan.ROOMS.getOrElse(currentRoom) { "General" }
+        store.add(roomName, myName.ifBlank { "Móvil" }, texto, true)
+        listener?.invoke(Event.Chat(ChatEntry(myName.ifBlank { "Móvil" }, texto, System.currentTimeMillis(), true)))
+        radio?.sendChat(texto)
     }
 
     // ------------------------------------------------------------ LanRadio.Listener
@@ -193,7 +207,13 @@ class LanService : Service(), LanRadio.Listener {
 
     /** La voz se convierte en texto en este móvil y se guarda en su historial. */
     private fun transcribeAndSave(room: Int, from: String, pcm: ByteArray) {
-        val engine = transcriber ?: return
+        val engine = transcriber
+        if (engine == null || !engine.isAvailable()) {
+            val texto = AUDIO_NOTE.format((pcm.size / (Lan.SAMPLE_RATE * 2)).coerceAtLeast(1))
+            store.add(Lan.ROOMS.getOrElse(room) { "General" }, from, texto, false)
+            listener?.invoke(Event.Chat(ChatEntry(from, texto, System.currentTimeMillis(), false)))
+            return
+        }
         engine.transcribe(
             room,
             from,
@@ -207,13 +227,19 @@ class LanService : Service(), LanRadio.Listener {
         )
     }
 
+    private var lastStatus = ""
+
     override fun onPeerCount(count: Int) {
-        val status = radio?.status
-        if (!status.isNullOrBlank()) listener?.invoke(Event.Status(status))
+        val status = radio?.status.orEmpty()
+        if (status.isNotBlank() && status != lastStatus) {
+            lastStatus = status
+            listener?.invoke(Event.Status(status))
+        }
         listener?.invoke(Event.PeerCount(count))
     }
 
     override fun onChat(from: String, text: String) {
+        WalkieLog.i("Wifi: mensaje de $from: ${text.take(80)}")
         store.add(Lan.ROOMS.getOrElse(currentRoom) { "General" }, from, text, false)
         listener?.invoke(Event.Chat(ChatEntry(from, text, System.currentTimeMillis(), false)))
     }

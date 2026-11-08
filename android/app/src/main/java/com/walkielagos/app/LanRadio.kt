@@ -223,19 +223,23 @@ class LanRadio(
     private fun receiveLoop(socket: MulticastSocket, group: InetAddress) {
         val buffer = ByteArray(2048)
         val packet = DatagramPacket(buffer, buffer.size)
-        var seen = 0
+        var ajenos = 0
+        var ownSeen = 0
         var lastLog = System.currentTimeMillis()
         while (running.get()) {
             try {
                 packet.length = buffer.size
                 socket.receive(packet)
-                seen++
+                val parsed = Lan.decode(packet.data, packet.length) ?: continue
+                if (parsed.nodeId == id) {
+                    ownSeen++
+                    continue
+                }
+                ajenos++
                 if (System.currentTimeMillis() - lastLog > 30_000) {
                     lastLog = System.currentTimeMillis()
-                    WalkieLog.i("Radio wifi: $seen paquetes recibidos hasta ahora")
+                    WalkieLog.i("Radio wifi: $ajenos paquetes de otros móviles (y $ownSeen propios) en 30 s")
                 }
-                val parsed = Lan.decode(packet.data, packet.length) ?: continue
-                if (parsed.nodeId == id) continue
                 if (parsed.room != room) continue
                 handle(parsed)
             } catch (closed: java.net.SocketException) {

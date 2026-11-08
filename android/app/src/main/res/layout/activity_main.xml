@@ -173,6 +173,15 @@
                 android:textColor="@color/muted" />
         </LinearLayout>
 
+        <!-- Dónde está escuchando (IP de la wifi y grupo de la radio). -->
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/muted"
+            android:textSize="11sp" />
+
         <TextView
             android:id="@+id/incoming"
             android:layout_width="match_parent"
@@ -193,8 +202,8 @@
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ptt"
             style="@style/Widget.Walkie.Ptt"
-            android:layout_width="220dp"
-            android:layout_height="220dp"
+            android:layout_width="180dp"
+            android:layout_height="180dp"
             android:text="@string/push_to_talk"
             app:backgroundTint="@color/ptt_tint"
             app:cornerRadius="110dp"
@@ -240,11 +249,13 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Chat -->
+    <!-- Chat: TODO el historial, lo escrito y lo hablado (transcrito) -->
     <LinearLayout
         android:id="@+id/chatBar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        android:layout_weight="1"
         android:background="@color/bg"
         android:orientation="vertical"
         android:paddingHorizontal="12dp"
@@ -253,10 +264,13 @@
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/chatList"
+            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
             android:layout_width="match_parent"
-            android:layout_height="150dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:clipToPadding="false"
-            android:paddingVertical="6dp" />
+            android:paddingVertical="6dp"
+            android:contentDescription="@string/chat_hint" />
 
         <LinearLayout
             android:layout_width="match_parent"

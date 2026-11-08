@@ -48,6 +48,7 @@ class Transcriber(private val context: Context) {
             true
         } catch (error: Throwable) {
             failed = true
+            WalkieLog.e("Voz: el modelo no se puede abrir (${modelDir().absolutePath})", error)
             false
         }
     }
@@ -57,15 +58,27 @@ class Transcriber(private val context: Context) {
      * plano: son unos 40 MB y bloquear la pantalla de inicio sería un cuelgue.
      */
     fun installIfBundled(assetsPath: String = "vosk-es") {
-        if (installed()) return
+        if (installed()) {
+            WalkieLog.i("Voz: el modelo ya estaba instalado en el móvil")
+            executor.execute { ensureModel() }
+            return
+        }
         executor.execute {
             try {
                 val children = context.assets.list(assetsPath)
-                if (children.isNullOrEmpty() || installed()) return@execute
+                if (children.isNullOrEmpty()) {
+                    WalkieLog.w("Voz: este APK no trae el modelo de voz ($assetsPath); no se transcribirá")
+                    return@execute
+                }
+                // Qué trae el APK, para detectar si se empaquetó mal.
+                val contenido = context.assets.list(assetsPath)?.take(3).orEmpty()
+                WalkieLog.i("Voz: copiando el modelo desde el APK (${children.size} elementos: $contenido)")
                 copyDir(assetsPath, modelDir())
-                ensureModel()
+                val ok = ensureModel()
+                WalkieLog.i("Voz: modelo ${if (ok) "listo" else "copiado pero no se puede abrir"}; ${modelDir().listFiles()?.size ?: 0} archivos")
             } catch (error: Throwable) {
                 failed = true
+                WalkieLog.e("Voz: no se pudo instalar el modelo", error)
             }
         }
     }
@@ -88,9 +101,23 @@ class Transcriber(private val context: Context) {
      * mientras alguien mantiene el botón). El texto llega en otro hilo.
      */
     fun transcribe(room: Int, from: String, pcm: ByteArray, listener: Listener) {
-        if (pcm.size < Pcm.SAMPLE_RATE / 2) return // menos de medio segundo: ruido
-        if (!ensureModel()) return
-        if (!busy.compareAndSet(false, true)) return
+        val segundos = pcm.size / (Pcm.SAMPLE_RATE * 2)
+        if (pcm.size < Pcm.SAMPLE_RATE / 2) {
+            WalkieLog.i("Voz: solo ${segundos} s de ${from}, es muy corto para transcribir")
+            return
+        }
+        if (!ensureModel()) {
+            WalkieLog.w(
+                "Voz: sin modelo de voz (${if (installed()) "no se puede abrir" else "no está en el móvil"}); " +
+                    "no se puede transcribir lo de $from"
+            )
+            return
+        }
+        if (!busy.compareAndSet(false, true)) {
+            WalkieLog.w("Voz: la transcripción anterior aún está en marcha; se pierde la de $from")
+            return
+        }
+        WalkieLog.i("Voz: transcribiendo ${segundos} s de $from")
         executor.execute {
             try {
                 val model = model ?: return@execute
@@ -105,12 +132,18 @@ class Transcriber(private val context: Context) {
                         offset += size
                     }
                     val text = clean(extractText(recognizer.finalResult))
-                    if (text.isNotBlank()) listener.onTranscribed(room, from, text)
+                    if (text.isNotBlank()) {
+                        WalkieLog.i("Voz: \"$text\" ($from)")
+                        listener.onTranscribed(room, from, text)
+                    } else {
+                        WalkieLog.i("Voz: no se ha entendido nada de $from")
+                    }
                 } finally {
                     recognizer.close()
                 }
             } catch (error: Throwable) {
                 failed = true
+                WalkieLog.e("Voz: fallo al transcribir", error)
             } finally {
                 busy.set(false)
             }
