@@ -24,6 +24,11 @@ android {
         }
     }
 
+    // Genera las clases Binding (ActivityMainBinding, ItemChatBinding) a partir de los layouts.
+    buildFeatures {
+        viewBinding = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
